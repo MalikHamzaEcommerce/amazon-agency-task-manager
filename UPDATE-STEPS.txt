@@ -1,0 +1,24 @@
+REHIRE / RESTORE VA VISIBILITY FIX
+
+1) Upload/replace these files in the SAME GitHub repository root:
+   index.html
+   app.js
+   firebase-adapter.js
+   styles.css
+   config.js
+   config.example.js
+   firestore.rules
+
+2) Commit changes.
+
+3) Firebase Console -> Firestore Database -> Rules:
+   replace all current rules with the contents of firestore.rules and Publish.
+
+4) Wait 1-2 minutes and refresh the live site.
+   The index.html in this package has cache-busting query strings, so the browser should load the latest app files.
+
+5) Owner -> Team / VAs should always show a second section:
+   Former / Removed VAs
+   If a VA was removed, click Restore Access.
+
+6) Removed VA can then use the SAME email + password and click Check Access Again or sign in again.
