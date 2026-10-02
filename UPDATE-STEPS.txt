@@ -1,13 +1,8 @@
-CLIENT-FIRST ACCOUNTS + REFRESH LOGIN FLASH FIX
+1. Upload/replace all files in the same GitHub repository and commit.
+2. Firebase -> Firestore Database -> Rules: replace with the included firestore.rules and Publish.
+3. Wait for GitHub Pages deploy, then hard refresh (Ctrl+F5).
+4. Test Account Login Access as Owner/Manager and confirm a VA does not see it.
+5. Test Former / Removed Team Members -> Delete Record as Owner.
+6. Task statuses now use Completed and Not Started.
 
-1. Upload/replace all files in the same GitHub repository root.
-2. Commit changes and wait for GitHub Pages to deploy.
-3. Hard refresh once (Ctrl+F5).
-4. No Firestore Rules change is required for this update.
-
-What changed:
-- Accounts tab now opens with Client Names first.
-- Click a client to see only that client's Amazon accounts.
-- Back to Clients button and client switch dropdown added.
-- Refresh now shows a short Loading workspace screen instead of flashing the Login page.
-- Current hash route is restored before the first dashboard render.
+Important: Delete Record permanently removes the Firestore profile only. Firebase Authentication is separate. To free the same email for a brand-new Create Account signup, delete the Auth user manually in Firebase Console -> Authentication -> Users.

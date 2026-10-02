@@ -230,7 +230,7 @@
         const batch = db.batch();
         taskSnap.docs.forEach(doc => {
           const task = doc.data();
-          if (task.assigned_to === memberId && task.status !== 'Complete') batch.update(doc.ref, { assigned_to: null });
+          if (task.assigned_to === memberId && !['Complete','Completed'].includes(task.status)) batch.update(doc.ref, { assigned_to: null });
         });
         batch.update(targetRef, {
           active: false,
@@ -263,6 +263,60 @@
         return { data: true, error: null };
       }
 
+      if (name === 'owner_delete_removed_member_record') {
+        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active Owner can permanently delete a former team record.');
+        const memberId = String(args.p_member_id || '').trim();
+        if (!memberId || memberId === user.uid) throw new Error('Invalid team member.');
+        const targetRef = db.collection('profiles').doc(memberId);
+        const targetSnap = await targetRef.get();
+        if (!targetSnap.exists) return { data: true, error: null };
+        const target = targetSnap.data();
+        if (target.agency_id !== profile.agency_id || target.role === 'owner' || target.removed !== true) throw new Error('Only a removed non-owner team record from your agency can be deleted.');
+        await targetRef.delete();
+        return { data: true, error: null };
+      }
+
+      if (name === 'get_account_login_access') {
+        if (!['owner','manager'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Account Login Access is available to Owners and Managers only.');
+        const accountId = String(args.p_account_id || '').trim();
+        const accountSnap = await db.collection('accounts').doc(accountId).get();
+        if (!accountSnap.exists || accountSnap.data().agency_id !== profile.agency_id) throw new Error('Account not found.');
+        const credSnap = await db.collection('account_credentials').doc(accountId).get();
+        return { data: credSnap.exists ? { id: credSnap.id, ...credSnap.data() } : null, error: null };
+      }
+
+      if (name === 'save_account_login_access') {
+        if (!['owner','manager'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Account Login Access is available to Owners and Managers only.');
+        const accountId = String(args.p_account_id || '').trim();
+        const password = String(args.p_password || '');
+        const loginName = String(args.p_login_name || '').trim();
+        if (!password) throw new Error('Password is required.');
+        const accountSnap = await db.collection('accounts').doc(accountId).get();
+        if (!accountSnap.exists || accountSnap.data().agency_id !== profile.agency_id) throw new Error('Account not found.');
+        const payload = {
+          agency_id: profile.agency_id,
+          account_id: accountId,
+          account_name: accountSnap.data().account_name || '',
+          login_name: loginName,
+          password,
+          updated_at: nowIso(),
+          updated_by: user.uid
+        };
+        await db.collection('account_credentials').doc(accountId).set(payload, { merge: true });
+        return { data: true, error: null };
+      }
+
+      if (name === 'delete_account_login_access') {
+        if (!['owner','manager'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Account Login Access is available to Owners and Managers only.');
+        const accountId = String(args.p_account_id || '').trim();
+        const accountSnap = await db.collection('accounts').doc(accountId).get();
+        if (!accountSnap.exists || accountSnap.data().agency_id !== profile.agency_id) throw new Error('Account not found.');
+        const credRef = db.collection('account_credentials').doc(accountId);
+        const credSnap = await credRef.get();
+        if (credSnap.exists) await credRef.delete();
+        return { data: true, error: null };
+      }
+
       if (name === 'update_my_profile') {
         await profileRef.update({ full_name: args.p_full_name || '' });
         return { data: true, error: null };
@@ -272,7 +326,7 @@
         if (!['va','manager','owner'].includes(profile.role)) throw new Error('Your account cannot update task status.');
         const taskId = String(args.p_task_id || '').trim();
         const status = String(args.p_status || '').trim();
-        const allowed = ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Complete'];
+        const allowed = ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Completed'];
         if (!taskId) throw new Error('Task ID is missing.');
         if (!allowed.includes(status)) throw new Error('Invalid task status.');
         const taskRef = db.collection('tasks').doc(taskId);
@@ -283,7 +337,7 @@
         if (!['owner','manager'].includes(profile.role) && task.assigned_to !== user.uid) throw new Error('This task is not assigned to your login.');
         const patch = {
           status,
-          completed_at: status === 'Complete' ? (task.completed_at || nowIso()) : null
+          completed_at: status === 'Completed' ? (task.completed_at || nowIso()) : null
         };
         await taskRef.update(patch);
         return { data: true, error: null };

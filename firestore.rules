@@ -21,6 +21,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/tasks/$(taskId);
     }
 
+    function accountPath(accountId) {
+      return /databases/$(database)/documents/accounts/$(accountId);
+    }
+
     function myProfile() {
       return get(profilePath(request.auth.uid)).data;
     }
@@ -157,7 +161,11 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'removed', 'restored_at', 'restored_by']))
       );
 
-      allow delete: if false;
+      allow delete: if isOwner()
+        && uid != request.auth.uid
+        && resource.data.agency_id == myAgency()
+        && resource.data.role != 'owner'
+        && resource.data.removed == true;
     }
 
     match /agencies/{agencyId} {
@@ -194,6 +202,24 @@ service cloud.firestore {
         && request.resource.data.agency_id == resource.data.agency_id;
       allow delete: if isLeadership()
         && sameAgency(resource.data.agency_id);
+    }
+
+    match /account_credentials/{accountId} {
+      allow get: if isLeadership()
+        && get(accountPath(accountId)).data.agency_id == myAgency();
+      allow list: if false;
+      allow create: if isLeadership()
+        && request.resource.data.agency_id == myAgency()
+        && request.resource.data.account_id == accountId
+        && get(accountPath(accountId)).data.agency_id == myAgency();
+      allow update: if isLeadership()
+        && resource.data.agency_id == myAgency()
+        && request.resource.data.agency_id == resource.data.agency_id
+        && request.resource.data.account_id == accountId
+        && get(accountPath(accountId)).data.agency_id == myAgency();
+      allow delete: if isLeadership()
+        && resource.data.agency_id == myAgency()
+        && get(accountPath(accountId)).data.agency_id == myAgency();
     }
 
     match /task_notes/{id} {
@@ -233,7 +259,7 @@ service cloud.firestore {
           ||
           (resource.data.assigned_to == request.auth.uid
             && request.resource.data.assigned_to == resource.data.assigned_to
-            && request.resource.data.status in ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Complete']
+            && request.resource.data.status in ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Completed']
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at']))
         );
 

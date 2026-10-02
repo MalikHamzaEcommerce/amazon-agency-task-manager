@@ -46,7 +46,7 @@
     const iso = (offset=0) => { const x=new Date(d); x.setDate(x.getDate()+offset); return x.toISOString().slice(0,10); };
     return [
       {id:'t1',account_id:'a1',title:'PPC campaign optimization',description:'Review spend and high ACOS terms',assigned_to:'va-ali',received_by:'demo-owner',source:'Email',status:'In Progress',priority:'High',due_date:iso(0),recurring:true,recurrence:'Weekly',created_at:new Date().toISOString()},
-      {id:'t2',account_id:'a3',title:'Fix suppressed listings',description:'Resolve listing suppression',assigned_to:'va-sarah',received_by:'demo-owner',source:'WhatsApp',status:'Complete',priority:'Medium',due_date:iso(0),recurring:false,recurrence:'',created_at:new Date().toISOString(),completed_at:new Date().toISOString()},
+      {id:'t2',account_id:'a3',title:'Fix suppressed listings',description:'Resolve listing suppression',assigned_to:'va-sarah',received_by:'demo-owner',source:'WhatsApp',status:'Completed',priority:'Medium',due_date:iso(0),recurring:false,recurrence:'',created_at:new Date().toISOString(),completed_at:new Date().toISOString()},
       {id:'t3',account_id:'a2',title:'Update keywords',description:'Update backend search terms',assigned_to:'va-ahmed',received_by:'demo-owner',source:'Slack',status:'Waiting on Client',priority:'High',due_date:iso(1),recurring:false,recurrence:'',created_at:new Date().toISOString()},
       {id:'t4',account_id:'a4',title:'Review account health',description:'Check policy and account health alerts',assigned_to:'demo-owner',received_by:'demo-owner',source:'Client Portal',status:'In Progress',priority:'Medium',due_date:iso(-1),recurring:true,recurrence:'Daily',created_at:new Date().toISOString()},
       {id:'t5',account_id:'a5',title:'Create A+ content',description:'Prepare module brief',assigned_to:'va-ali',received_by:'demo-owner',source:'Email',status:'Not Started',priority:'Low',due_date:iso(2),recurring:false,recurrence:'',created_at:new Date().toISOString()},
@@ -83,8 +83,15 @@
   function visibleTeam(){ return state.team.filter(m=>m.removed!==true); }
   function removedTeam(){ return state.team.filter(m=>m.removed===true); }
   function activeTeam(){ return visibleTeam().filter(m=>m.active!==false); }
-  function isOverdue(t){ return t.status!=='Complete' && t.due_date && t.due_date < today(); }
-  function displayStatus(t){ return isOverdue(t) ? 'Overdue' : t.status; }
+  function normalizeTaskStatus(v=''){
+    const s=String(v||'').trim();
+    if(s==='Complete') return 'Completed';
+    if(s==='Not Start') return 'Not Started';
+    return s || 'Not Started';
+  }
+  function isCompletedTask(t){ return normalizeTaskStatus(t?.status)==='Completed'; }
+  function isOverdue(t){ return !isCompletedTask(t) && t.due_date && t.due_date < today(); }
+  function displayStatus(t){ return isOverdue(t) ? 'Overdue' : normalizeTaskStatus(t.status); }
   function taskStatusClass(t){ return `status-${slug(displayStatus(t))}`; }
   function initials(name=''){ return name.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase() || 'U'; }
   function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
@@ -144,7 +151,7 @@
   function metricCounts(tasks=state.tasks){
     return {
       total:tasks.length,
-      complete:tasks.filter(t=>t.status==='Complete').length,
+      complete:tasks.filter(isCompletedTask).length,
       progress:tasks.filter(t=>t.status==='In Progress').length,
       notStarted:tasks.filter(t=>t.status==='Not Started').length,
       waiting:tasks.filter(t=>t.status==='Waiting on Client').length,
@@ -154,7 +161,7 @@
 
   function dashboardPage(){
     const c=metricCounts();
-    const teamCounts=activeTeam().map(m=>({m,count:state.tasks.filter(t=>t.assigned_to===m.id && t.status!=='Complete').length})).sort((a,b)=>b.count-a.count);
+    const teamCounts=activeTeam().map(m=>({m,count:state.tasks.filter(t=>t.assigned_to===m.id && !isCompletedTask(t)).length})).sort((a,b)=>b.count-a.count);
     const sources={}; state.tasks.forEach(t=>sources[t.source]=(sources[t.source]||0)+1);
     const maxTeam=Math.max(1,...teamCounts.map(x=>x.count));
     const maxSource=Math.max(1,...Object.values(sources));
@@ -177,16 +184,16 @@
   }
   function kpi(label,value,cls){ return `<div class="card kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`; }
   function statusBars(){
-    const labels=['Complete','In Progress','Not Started','Waiting on Client','Blocked'];
-    const max=Math.max(1,...labels.map(s=>state.tasks.filter(t=>t.status===s).length));
-    return labels.map((s,i)=>{ const n=state.tasks.filter(t=>t.status===s).length; const cl=['green','','amber','purple','red'][i]; return `<div class="status-row"><span>${s}</span><div class="bar ${cl}"><i style="width:${Math.round(n/max*100)}%"></i></div><b>${n}</b></div>`; }).join('');
+    const labels=['Completed','In Progress','Not Started','Waiting on Client','Blocked'];
+    const max=Math.max(1,...labels.map(s=>state.tasks.filter(t=>normalizeTaskStatus(t.status)===s).length));
+    return labels.map((s,i)=>{ const n=state.tasks.filter(t=>normalizeTaskStatus(t.status)===s).length; const cl=['green','','amber','purple','red'][i]; return `<div class="status-row"><span>${s}</span><div class="bar ${cl}"><i style="width:${Math.round(n/max*100)}%"></i></div><b>${n}</b></div>`; }).join('');
   }
   function accountsMini(){
     const rows=state.accounts.slice(0,6).map(a=>`<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.client_name||'—')}</td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${state.tasks.filter(t=>t.account_id===a.id).length}</td></tr>`).join('');
     return `<div class="table-wrap"><table class="data-table" style="min-width:650px"><thead><tr><th>Account</th><th>Client</th><th>Marketplace</th><th>Status</th><th>Tasks</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No accounts</td></tr>'}</tbody></table></div>`;
   }
   function upcomingMini(){
-    const list=state.tasks.filter(t=>t.status!=='Complete'&&t.due_date).sort((a,b)=>a.due_date.localeCompare(b.due_date)).slice(0,7);
+    const list=state.tasks.filter(t=>!isCompletedTask(t)&&t.due_date).sort((a,b)=>a.due_date.localeCompare(b.due_date)).slice(0,7);
     return list.map(t=>`<div class="metric-item"><div><b>${esc(t.title)}</b><div class="small muted">${esc(accountById(t.account_id)?.account_name||'No account')}</div></div><div style="text-align:right">${badge(t.priority)}<div class="small ${isOverdue(t)?'danger':'muted'}" style="margin-top:5px">${fmtDate(t.due_date)}</div></div></div>`).join('')||'<div class="empty">No upcoming deadlines</div>';
   }
 
@@ -202,7 +209,7 @@
         const taskIds=new Set(accounts.map(a=>a.id));
         const tasks=state.tasks.filter(t=>taskIds.has(t.account_id));
         const active=accounts.filter(a=>String(a.status||'').toLowerCase()==='active').length;
-        const open=tasks.filter(t=>t.status!=='Complete').length;
+        const open=tasks.filter(t=>!isCompletedTask(t)).length;
         return {name,accounts,active,open};
       }).filter(c=>matchesGlobal([c.name,...c.accounts.flatMap(a=>[a.account_name,a.marketplace,a.status])]))
         .sort((a,b)=>a.name.localeCompare(b.name));
@@ -213,8 +220,8 @@
 
     const accounts=state.accounts.filter(a=>clientLabel(a)===selectedClient).filter(a=>matchesGlobal([a.account_name,a.client_name,a.marketplace,a.status]));
     const rows=accounts.map(a=>{
-      const all=state.tasks.filter(t=>t.account_id===a.id); const open=all.filter(t=>t.status!=='Complete').length;
-      return `<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${all.length}</td><td>${open}</td><td>${hasFullAccess()?`<button class="btn small" data-edit-account="${a.id}">Edit</button> `:''}<button class="btn small" data-account-tasks="${a.id}">Tasks</button></td></tr>`;
+      const all=state.tasks.filter(t=>t.account_id===a.id); const open=all.filter(t=>!isCompletedTask(t)).length;
+      return `<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${all.length}</td><td>${open}</td><td>${hasFullAccess()?`<button class="btn small" data-edit-account="${a.id}">Edit</button> <button class="btn small" data-login-access="${a.id}">Login Access</button> `:''}<button class="btn small" data-account-tasks="${a.id}">Tasks</button></td></tr>`;
     }).join('');
     return `<div class="page-head client-account-head"><div><button class="btn back-btn" data-back-clients>← Back to Clients</button><h1>${esc(selectedClient)}</h1><p class="muted">${accounts.length} account${accounts.length===1?'':'s'} for this client</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-account">＋ New Account</button>':''}</div>
       <div class="card table-card"><div class="table-toolbar"><div><h3>${esc(selectedClient)} Accounts</h3><div class="muted small">Switch clients anytime without leaving the Accounts tab.</div></div><div class="client-jump"><label for="clientJump" class="small muted">Client</label><select id="clientJump"><option value="">All Clients</option>${clientNames.map(name=>`<option value="${esc(name)}" ${name===selectedClient?'selected':''}>${esc(name)}</option>`).join('')}</select></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Account Name</th><th>Marketplace</th><th>Status</th><th>Total Tasks</th><th>Open Tasks</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">No accounts found for this client</td></tr>'}</tbody></table></div></div>`;
@@ -225,7 +232,7 @@
     return `<div class="filters">
       <select id="fAccount"><option value="">All Accounts</option>${state.accounts.map(a=>`<option value="${a.id}" ${state.filters.account===a.id?'selected':''}>${esc(a.account_name)}</option>`).join('')}</select>
       <select id="fAssignee"><option value="">All VAs</option>${visibleTeam().map(m=>`<option value="${m.id}" ${state.filters.assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select>
-      <select id="fStatus"><option value="">All Status</option>${['Not Started','In Progress','Waiting on Client','Blocked','Complete'].map(v=>`<option ${state.filters.status===v?'selected':''}>${v}</option>`).join('')}</select>
+      <select id="fStatus"><option value="">All Status</option>${['Not Started','In Progress','Waiting on Client','Blocked','Completed'].map(v=>`<option ${state.filters.status===v?'selected':''}>${v}</option>`).join('')}</select>
       <select id="fPriority"><option value="">All Priority</option>${['High','Medium','Low'].map(v=>`<option ${state.filters.priority===v?'selected':''}>${v}</option>`).join('')}</select>
       <select id="fSource"><option value="">All Sources</option>${vals(state.tasks,'source').map(v=>`<option ${state.filters.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>
     </div>`;
@@ -264,12 +271,12 @@
   function teamPage(){
     const teamMembers=visibleTeam();
     const rows=teamMembers.filter(m=>matchesGlobal([m.full_name,m.email,m.role])).map((m,i)=>{
-      const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>t.status!=='Complete').length, overdue=all.filter(isOverdue).length, completeToday=all.filter(t=>t.status==='Complete' && (t.completed_at||'').slice(0,10)===today()).length;
+      const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>!isCompletedTask(t)).length, overdue=all.filter(isOverdue).length, completeToday=all.filter(t=>isCompletedTask(t) && (t.completed_at||'').slice(0,10)===today()).length;
       return `<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role))}</td><td>${all.length}</td><td>${open}</td><td class="${overdue?'danger':''}">${overdue}</td><td>${completeToday}</td><td>${m.active?badge('Active'):badge('Paused')}</td>${canManageMember(m)?`<td><button class="btn small" data-edit-member="${m.id}">Edit</button></td>`:'<td>—</td>'}</tr>`;
     }).join('');
     const former=removedTeam().filter(m=>matchesGlobal([m.full_name,m.email,m.role]));
-    const formerRows=former.map((m,i)=>`<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role||'va'))}</td><td>${fmtNoteTime(m.removed_at)||'—'}</td><td>${canRestoreMember(m)?`<button class="btn primary small" data-restore-member="${m.id}">Restore Access</button>`:'—'}</td></tr>`).join('');
-    const formerCard=hasFullAccess()?`<div class="card table-card" style="margin-top:18px"><div class="table-toolbar"><div><h3>Former / Removed Team Members</h3><div class="muted small">Restore a previous team member without creating a new login.</div></div><div class="muted small">${former.length} removed</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Removed</th><th>Actions</th></tr></thead><tbody>${formerRows||'<tr><td colspan="6" class="empty">No removed VAs</td></tr>'}</tbody></table></div></div>`:'';
+    const formerRows=former.map((m,i)=>`<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role||'va'))}</td><td>${fmtNoteTime(m.removed_at)||'—'}</td><td>${canRestoreMember(m)?`<button class="btn primary small" data-restore-member="${m.id}">Restore Access</button> `:''}${isOwnerUser()?`<button class="btn red small" data-delete-member-record="${m.id}">Delete Record</button>`:''}</td></tr>`).join('');
+    const formerCard=hasFullAccess()?`<div class="card table-card" style="margin-top:18px"><div class="table-toolbar"><div><h3>Former / Removed Team Members</h3><div class="muted small">Restore access, or let the Owner permanently delete the removed Firestore team record.</div></div><div class="muted small">${former.length} removed</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Removed</th><th>Actions</th></tr></thead><tbody>${formerRows||'<tr><td colspan="6" class="empty">No removed VAs</td></tr>'}</tbody></table></div></div>`:'';
     return `<div class="page-head"><div><h1>Team / VAs</h1><p class="muted">${hasFullAccess()?'Manage your team members and workload':'View team workload'}</p></div>${hasFullAccess()?'<button class="btn primary" data-action="invite-va">＋ New VA</button>':''}</div>
       <div class="card table-card"><div class="table-toolbar"><h3>Team Workload</h3><div class="muted small">${teamMembers.length} members</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Total Tasks</th><th>Open</th><th>Overdue</th><th>Completed Today</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No team members</td></tr>'}</tbody></table></div></div>${formerCard}`;
   }
@@ -287,8 +294,8 @@
 
   function reportsPage(){
     const c=metricCounts();
-    const byAccount=state.accounts.map(a=>{const ts=state.tasks.filter(t=>t.account_id===a.id);return {a,total:ts.length,complete:ts.filter(t=>t.status==='Complete').length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
-    const byPerson=visibleTeam().map(m=>{const ts=state.tasks.filter(t=>t.assigned_to===m.id);return {m,total:ts.length,complete:ts.filter(t=>t.status==='Complete').length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
+    const byAccount=state.accounts.map(a=>{const ts=state.tasks.filter(t=>t.account_id===a.id);return {a,total:ts.length,complete:ts.filter(isCompletedTask).length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
+    const byPerson=visibleTeam().map(m=>{const ts=state.tasks.filter(t=>t.assigned_to===m.id);return {m,total:ts.length,complete:ts.filter(isCompletedTask).length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
     return `<div class="page-head"><div><h1>Reports</h1><p class="muted">Agency task and workload insights</p></div></div>
       <div class="grid kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpi('Total Tasks',c.total,'blue')}${kpi('Completed',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Overdue',c.overdue,'red')}</div>
       <div class="grid report-grid">
@@ -354,6 +361,7 @@
     document.querySelectorAll('[data-open-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.openTask)));
     document.querySelectorAll('[data-edit-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.editTask)));
     document.querySelectorAll('[data-edit-account]').forEach(x=>x.onclick=()=>accountModal(state.accounts.find(a=>a.id===x.dataset.editAccount)));
+    document.querySelectorAll('[data-login-access]').forEach(x=>x.onclick=()=>accountLoginAccessModal(state.accounts.find(a=>a.id===x.dataset.loginAccess)));
     document.querySelectorAll('[data-view-client]').forEach(x=>x.onclick=e=>{e.stopPropagation(); const name=x.dataset.viewClient||''; if(name) location.hash='#/accounts?client='+encodeURIComponent(name);});
     document.querySelector('[data-back-clients]')?.addEventListener('click',()=>{location.hash='#/accounts';});
     const clientJump=document.getElementById('clientJump'); if(clientJump) clientJump.onchange=e=>{const name=e.target.value; location.hash=name?'#/accounts?client='+encodeURIComponent(name):'#/accounts';};
@@ -361,6 +369,7 @@
     document.querySelectorAll('[data-account-tasks]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.accountTasks; location.hash='#/tasks';});
     document.querySelectorAll('[data-edit-member]').forEach(x=>x.onclick=()=>memberModal(state.team.find(m=>m.id===x.dataset.editMember)));
     document.querySelectorAll('[data-restore-member]').forEach(x=>x.onclick=()=>restoreMemberData(state.team.find(m=>m.id===x.dataset.restoreMember)));
+    document.querySelectorAll('[data-delete-member-record]').forEach(x=>x.onclick=()=>deleteRemovedMemberRecord(state.team.find(m=>m.id===x.dataset.deleteMemberRecord)));
     ['fAccount','fAssignee','fStatus','fPriority','fSource'].forEach(id=>{const el=document.getElementById(id); if(el)el.onchange=e=>{const key={fAccount:'account',fAssignee:'assignee',fStatus:'status',fPriority:'priority',fSource:'source'}[id];state.filters[key]=e.target.value;render();};});
     document.querySelector('[data-action="save-profile"]')?.addEventListener('click',saveProfile);
     document.querySelector('[data-action="save-agency"]')?.addEventListener('click',saveAgency);
@@ -443,7 +452,7 @@
       <div class="field"><label>Task</label><input value="${esc(t.title||'')}" disabled></div>
       <div class="two"><div class="field"><label>Account</label><input value="${esc(a?.account_name||'—')}" disabled></div><div class="field"><label>Due Date</label><input value="${esc(fmtDate(t.due_date))}" disabled></div></div>
       <div class="field"><label>Owner Instructions / Description</label><textarea rows="4" disabled>${esc(t.description||'')}</textarea></div>
-      <div class="field"><label>Status</label><select id="vaTaskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Complete'].map(v=>`<option ${t.status===v?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select id="vaTaskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Completed'].map(v=>`<option ${t.status===v?'selected':''}>${v}</option>`).join('')}</select></div>
       <p class="small muted">You can update the status and add notes on tasks assigned to you. Other task fields remain controlled by an Owner or Manager.</p>
       ${taskNotesSection(t,true)}
     `,'<button class="btn" id="cancelVaTask">Cancel</button><button class="btn primary" id="saveVaTask">Save Status</button>');
@@ -458,7 +467,7 @@
     const status=vaTaskStatus.value;
     const {error}=await sb.rpc('update_my_task_status',{p_task_id:t.id,p_status:status});
     if(error){ toast(error.message); return; }
-    closeModalFn(); await loadData(); toast(status==='Complete'?'Task marked complete':'Task status updated');
+    closeModalFn(); await loadData(); toast(status==='Completed'?'Task marked completed':'Task status updated');
   }
 
   function taskModal(t=null){
@@ -468,7 +477,7 @@
       <div class="field"><label>Task</label><input id="taskTitle" value="${esc(x.title)}" required placeholder="e.g. PPC campaign optimization"></div>
       <div class="two"><div class="field"><label>Account</label><select id="taskAccount" required><option value="">Select account</option>${state.accounts.map(a=>`<option value="${a.id}" ${x.account_id===a.id?'selected':''}>${esc(a.account_name)} — ${esc(a.client_name||'')}</option>`).join('')}</select></div><div class="field"><label>Assigned To</label><select id="taskAssignee"><option value="">Unassigned</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.assigned_to===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Task Source</label><select id="taskSource">${['Email','Slack','WhatsApp','Upwork','Fiverr','Client Portal','Call','Internal','Other'].map(v=>`<option ${x.source===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Received By</label><select id="taskReceived"><option value="">Not set</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.received_by===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
-      <div class="two"><div class="field"><label>Status</label><select id="taskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Complete'].map(v=>`<option ${x.status===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Priority</label><select id="taskPriority">${['High','Medium','Low'].map(v=>`<option ${x.priority===v?'selected':''}>${v}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Status</label><select id="taskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Completed'].map(v=>`<option ${x.status===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Priority</label><select id="taskPriority">${['High','Medium','Low'].map(v=>`<option ${x.priority===v?'selected':''}>${v}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Due Date</label><input id="taskDue" type="date" value="${esc(x.due_date||'')}"></div><div class="field"><label>Recurring</label><select id="taskRecurring"><option value="false" ${!x.recurring?'selected':''}>No</option><option value="true" ${x.recurring?'selected':''}>Yes</option></select></div></div>
       <div class="field"><label>Recurrence</label><select id="taskRecurrence"><option value="">None</option>${['Daily','Weekly','Monthly'].map(v=>`<option ${x.recurrence===v?'selected':''}>${v}</option>`).join('')}</select></div>
       <div class="field"><label>Notes / Description</label><textarea id="taskDescription" rows="4" placeholder="Details, client request, links...">${esc(x.description||'')}</textarea></div>
@@ -484,14 +493,14 @@
     };
     if(!data.title||!data.account_id){toast('Task and account are required');return;}
     if(state.demo){
-      if(id){const i=state.tasks.findIndex(t=>t.id===id);state.tasks[i]={...state.tasks[i],...data,completed_at:data.status==='Complete'?(state.tasks[i].completed_at||new Date().toISOString()):null};}
-      else state.tasks.push({id:'t'+Date.now(),...data,created_at:new Date().toISOString(),completed_at:data.status==='Complete'?new Date().toISOString():null});
+      if(id){const i=state.tasks.findIndex(t=>t.id===id);state.tasks[i]={...state.tasks[i],...data,completed_at:data.status==='Completed'?(state.tasks[i].completed_at||new Date().toISOString()):null};}
+      else state.tasks.push({id:'t'+Date.now(),...data,created_at:new Date().toISOString(),completed_at:data.status==='Completed'?new Date().toISOString():null});
       persistDemo();closeModalFn();render();toast('Task saved');return;
     }
     if(!hasFullAccess()){toast('Only an owner or manager can create or fully edit tasks.');return;}
     data.agency_id=state.profile.agency_id;
     const existing=id?state.tasks.find(t=>t.id===id):null;
-    data.completed_at=data.status==='Complete'?(existing?.completed_at||new Date().toISOString()):null;
+    data.completed_at=data.status==='Completed'?(existing?.completed_at||new Date().toISOString()):null;
     if(!id) data.created_by=state.user.id;
     const res=id?await sb.from('tasks').update(data).eq('id',id):await sb.from('tasks').insert(data);
     if(res.error){toast(res.error.message);return;} closeModalFn();await loadData();toast('Task saved');
@@ -505,7 +514,40 @@
     cancelAccount.onclick=closeModalFn; saveAccount.onclick=()=>saveAccountData(a?.id); if(edit)deleteAccount.onclick=()=>deleteAccountData(a.id);
   }
   async function saveAccountData(id){ const data={account_name:accName.value.trim(),client_name:accClient.value.trim(),marketplace:accMarket.value,status:accStatus.value,notes:accNotes.value.trim()}; if(!data.account_name){toast('Account name is required');return;} if(state.demo){if(id){const i=state.accounts.findIndex(a=>a.id===id);state.accounts[i]={...state.accounts[i],...data};}else state.accounts.push({id:'a'+Date.now(),...data});persistDemo();closeModalFn();render();toast('Account saved');return;} if(!hasFullAccess()){toast('Only an owner or manager can create or edit accounts.');return;}data.agency_id=state.profile.agency_id;if(!id)data.created_by=state.user.id;const res=id?await sb.from('accounts').update(data).eq('id',id):await sb.from('accounts').insert(data);if(res.error)toast(res.error.message);else{closeModalFn();await loadData();toast('Account saved');} }
-  async function deleteAccountData(id){ if(!hasFullAccess()){toast('Only an owner or manager can delete accounts.');return;} if(state.tasks.some(t=>t.account_id===id)&&!confirm('This account has tasks. Delete account anyway? Tasks will remain without an account.'))return;if(!confirm('Delete this account?'))return;if(state.demo){state.accounts=state.accounts.filter(a=>a.id!==id);state.tasks=state.tasks.map(t=>t.account_id===id?{...t,account_id:null}:t);persistDemo();closeModalFn();render();return;}const {error}=await sb.from('accounts').delete().eq('id',id);if(error)toast(error.message);else{closeModalFn();await loadData();} }
+  async function deleteAccountData(id){ if(!hasFullAccess()){toast('Only an owner or manager can delete accounts.');return;} if(state.tasks.some(t=>t.account_id===id)&&!confirm('This account has tasks. Delete account anyway? Tasks will remain without an account.'))return;if(!confirm('Delete this account?'))return;if(state.demo){state.accounts=state.accounts.filter(a=>a.id!==id);state.tasks=state.tasks.map(t=>t.account_id===id?{...t,account_id:null}:t);persistDemo();closeModalFn();render();return;}const credRes=await sb.rpc('delete_account_login_access',{p_account_id:id});if(credRes.error){toast(credRes.error.message);return;}const {error}=await sb.from('accounts').delete().eq('id',id);if(error)toast(error.message);else{closeModalFn();await loadData();} }
+
+  async function accountLoginAccessModal(a){
+    if(!hasFullAccess()){toast('Account Login Access is available to Owners and Managers only.');return;}
+    if(!a)return;
+    let saved=null;
+    if(state.demo){ saved=a.login_access||null; }
+    else {
+      const {data,error}=await sb.rpc('get_account_login_access',{p_account_id:a.id});
+      if(error){toast(error.message);return;}
+      saved=data||null;
+    }
+    modal('Account Login Access',`<div class="small muted" style="margin-bottom:12px">Owner / Manager only. VAs cannot see or read this feature.</div>
+      <div class="field"><label>Account Name</label><input value="${esc(a.account_name)}" disabled></div>
+      <div class="field"><label>Login Email / Username</label><input id="accountLoginName" value="${esc(saved?.login_name||'')}" placeholder="Seller Central login email / username"></div>
+      <div class="field"><label>Password</label><div style="display:flex;gap:8px"><input id="accountLoginPassword" type="password" value="${esc(saved?.password||'')}" placeholder="Account password" style="flex:1"><button class="btn" type="button" id="toggleAccountPassword">Show</button></div></div>
+      <div class="small muted">This password is protected from VAs by Firestore rules, but it is still stored in your Firebase database. A dedicated password manager is safer for highly sensitive credentials.</div>`,
+      `${saved?'<button class="btn red" id="clearAccountLogin">Delete Saved Access</button>':''}<button class="btn" id="cancelAccountLogin">Cancel</button><button class="btn primary" id="saveAccountLogin">Save Login Access</button>`);
+    cancelAccountLogin.onclick=closeModalFn;
+    toggleAccountPassword.onclick=()=>{const input=document.getElementById('accountLoginPassword');const show=input.type==='password';input.type=show?'text':'password';toggleAccountPassword.textContent=show?'Hide':'Show';};
+    saveAccountLogin.onclick=async()=>{
+      const login_name=accountLoginName.value.trim(), password=accountLoginPassword.value;
+      if(!password){toast('Password is required.');return;}
+      if(state.demo){a.login_access={login_name,password};persistDemo();closeModalFn();toast('Login access saved');return;}
+      const {error}=await sb.rpc('save_account_login_access',{p_account_id:a.id,p_login_name:login_name,p_password:password});
+      if(error)toast(error.message);else{closeModalFn();toast('Login access saved');}
+    };
+    if(saved) clearAccountLogin.onclick=async()=>{
+      if(!confirm(`Delete saved login access for ${a.account_name}?`))return;
+      if(state.demo){delete a.login_access;persistDemo();closeModalFn();toast('Saved login access deleted');return;}
+      const {error}=await sb.rpc('delete_account_login_access',{p_account_id:a.id});
+      if(error)toast(error.message);else{closeModalFn();toast('Saved login access deleted');}
+    };
+  }
 
   function inviteModal(){
     if(!hasFullAccess()){toast('Only an owner or manager can invite VAs.');return;}
@@ -554,7 +596,7 @@
   async function removeMemberData(m){
     if(!canRemoveMember(m)){toast('You do not have permission to remove this team member.');return;}
     if(!m || m.id===state.agency?.owner_id || m.role==='owner'){toast('The agency owner cannot be removed.');return;}
-    const openCount=state.tasks.filter(t=>t.assigned_to===m.id && t.status!=='Complete').length;
+    const openCount=state.tasks.filter(t=>t.assigned_to===m.id && !isCompletedTask(t)).length;
     const message=openCount
       ? `Remove ${m.full_name||'this team member'} from the agency? ${openCount} open task${openCount===1?'':'s'} will be unassigned. Completed task history and notes will be kept.`
       : `Remove ${m.full_name||'this team member'} from the agency? Their access will be revoked immediately. Completed task history and notes will be kept.`;
@@ -562,7 +604,7 @@
     if(state.demo){
       const i=state.team.findIndex(x=>x.id===m.id);
       if(i>=0)state.team[i]={...state.team[i],active:false,removed:true,removed_at:new Date().toISOString(),removed_by:state.profile.id};
-      state.tasks=state.tasks.map(t=>(t.assigned_to===m.id && t.status!=='Complete')?{...t,assigned_to:null}:t);
+      state.tasks=state.tasks.map(t=>(t.assigned_to===m.id && !isCompletedTask(t))?{...t,assigned_to:null}:t);
       persistDemo();closeModalFn();render();toast('Team member removed');return;
     }
     const {error}=await sb.rpc('owner_remove_member',{p_member_id:m.id});
@@ -583,6 +625,16 @@
     if(error)toast(error.message);else{await loadData();toast('Team member access restored. They can use the same login again.');}
   }
 
+  async function deleteRemovedMemberRecord(m){
+    if(!isOwnerUser()){toast('Only the Owner can permanently delete a former team record.');return;}
+    if(!m || m.role==='owner' || m.id===state.agency?.owner_id || m.removed!==true){toast('Only a removed non-owner team record can be deleted.');return;}
+    if(!confirm(`Permanently delete the Firestore team record for ${m.full_name||m.email||'this member'}? This cannot be undone. Their historical task notes remain as audit history.`))return;
+    if(!confirm('Final confirmation: delete this removed team record permanently?'))return;
+    if(state.demo){state.team=state.team.filter(x=>x.id!==m.id);persistDemo();render();toast('Former team record deleted');return;}
+    const {error}=await sb.rpc('owner_delete_removed_member_record',{p_member_id:m.id});
+    if(error)toast(error.message);else{await loadData();toast('Former team record deleted from Firestore. Firebase Auth login is separate.');}
+  }
+
   async function saveProfile(){const name=document.getElementById('setName').value.trim();if(state.demo){state.profile.full_name=name;const i=state.team.findIndex(m=>m.id===state.profile.id);if(i>=0)state.team[i].full_name=name;persistDemo();render();toast('Profile saved');return;}const {error}=await sb.rpc('update_my_profile',{p_full_name:name});if(error)toast(error.message);else{await loadData();toast('Profile saved');}}
   async function saveAgency(){if(!hasFullAccess()){toast('Only an owner or manager can edit agency settings.');return;}const name=document.getElementById('agencyName').value.trim();if(!name)return;if(state.demo){state.agency.name=name;persistDemo();render();toast('Agency saved');return;}const {error}=await sb.from('agencies').update({name}).eq('id',state.agency.id);if(error)toast(error.message);else{await loadData();toast('Agency saved');}}
 
@@ -601,7 +653,7 @@
       sb.from('profiles').select('*').order('created_at',{ascending:true})
     ]);
     if(agencyRes.error)toast(agencyRes.error.message); state.agency=agencyRes.data;
-    state.accounts=accountsRes.data||[];state.tasks=tasksRes.data||[];state.team=teamRes.data||[];
+    state.accounts=accountsRes.data||[];state.tasks=(tasksRes.data||[]).map(t=>({...t,status:normalizeTaskStatus(t.status)}));state.team=teamRes.data||[];
     render();
   }
 
