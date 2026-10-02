@@ -121,6 +121,20 @@ service cloud.firestore {
           && request.resource.data.removed_by == request.auth.uid
           && request.resource.data.removed_at is string
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'removed', 'removed_at', 'removed_by']))
+        ||
+        // Owner may restore a previously removed teammate. The Firebase Auth login
+        // is kept, so the VA can use the exact same email/password after restore.
+        (isOwner()
+          && uid != request.auth.uid
+          && resource.data.agency_id == myAgency()
+          && resource.data.role != 'owner'
+          && resource.data.removed == true
+          && request.resource.data.agency_id == resource.data.agency_id
+          && request.resource.data.active == true
+          && request.resource.data.removed == false
+          && request.resource.data.restored_by == request.auth.uid
+          && request.resource.data.restored_at is string
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'removed', 'restored_at', 'restored_by']))
       );
 
       allow delete: if false;

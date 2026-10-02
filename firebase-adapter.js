@@ -225,6 +225,26 @@
         return { data: true, error: null };
       }
 
+      if (name === 'owner_restore_member') {
+        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active agency owner can restore VAs.');
+        const memberId = String(args.p_member_id || '').trim();
+        if (!memberId) throw new Error('Team member ID is missing.');
+        if (memberId === user.uid) throw new Error('The agency owner cannot restore their own login as a VA.');
+        const targetRef = db.collection('profiles').doc(memberId);
+        const targetSnap = await targetRef.get();
+        if (!targetSnap.exists || targetSnap.data().agency_id !== profile.agency_id) throw new Error('Former team member not found.');
+        const target = targetSnap.data();
+        if (target.role === 'owner') throw new Error('The agency owner account cannot be restored as a VA.');
+        if (target.removed !== true) return { data: true, error: null };
+        await targetRef.update({
+          active: true,
+          removed: false,
+          restored_at: nowIso(),
+          restored_by: user.uid
+        });
+        return { data: true, error: null };
+      }
+
       if (name === 'update_my_profile') {
         await profileRef.update({ full_name: args.p_full_name || '' });
         return { data: true, error: null };

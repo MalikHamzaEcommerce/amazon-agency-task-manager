@@ -61,3 +61,8 @@ Task rows and calendar items are color-coded automatically:
 
 ## Owner: remove a VA
 The owner can open **Team / VAs -> Edit -> Remove VA**. Removal is a secure soft-delete: the VA immediately loses agency access, disappears from the active team, and any open tasks assigned to that VA become unassigned. Completed-task attribution and task-note history remain available for audit/history. Firebase Authentication does not allow one browser user to delete another user's Auth account directly, so the login record remains in Firebase Auth but cannot access agency data.
+
+
+## Restore / Rehire a removed VA
+
+Owners can open **Team / VAs → Former / Removed VAs** and click **Restore Access**. The VA keeps the same Firebase Authentication account and can sign in with the exact same email/password. If the VA is already signed in on the "Agency access removed" screen, they can click **Check Access Again** after the owner restores them. Open tasks that were unassigned during removal stay unassigned until the owner assigns them again.

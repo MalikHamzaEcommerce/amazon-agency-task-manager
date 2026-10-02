@@ -81,6 +81,7 @@
   function accountById(id){ return state.accounts.find(a=>a.id===id); }
   function memberById(id){ return state.team.find(m=>m.id===id); }
   function visibleTeam(){ return state.team.filter(m=>m.removed!==true); }
+  function removedTeam(){ return state.team.filter(m=>m.removed===true); }
   function activeTeam(){ return visibleTeam().filter(m=>m.active!==false); }
   function isOverdue(t){ return t.status!=='Complete' && t.due_date && t.due_date < today(); }
   function displayStatus(t){ return isOverdue(t) ? 'Overdue' : t.status; }
@@ -228,8 +229,11 @@
       const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>t.status!=='Complete').length, overdue=all.filter(isOverdue).length, completeToday=all.filter(t=>t.status==='Complete' && (t.completed_at||'').slice(0,10)===today()).length;
       return `<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role))}</td><td>${all.length}</td><td>${open}</td><td class="${overdue?'danger':''}">${overdue}</td><td>${completeToday}</td><td>${m.active?badge('Active'):badge('Paused')}</td>${state.profile?.role==='owner'?`<td><button class="btn small" data-edit-member="${m.id}">Edit</button></td>`:'<td>—</td>'}</tr>`;
     }).join('');
+    const former=removedTeam().filter(m=>matchesGlobal([m.full_name,m.email,m.role]));
+    const formerRows=former.map((m,i)=>`<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role||'va'))}</td><td>${fmtNoteTime(m.removed_at)||'—'}</td><td>${isOwnerUser()?`<button class="btn primary small" data-restore-member="${m.id}">Restore Access</button>`:'—'}</td></tr>`).join('');
+    const formerCard=isOwnerUser()?`<div class="card table-card" style="margin-top:18px"><div class="table-toolbar"><div><h3>Former / Removed VAs</h3><div class="muted small">Restore a previous VA without creating a new login.</div></div><div class="muted small">${former.length} removed</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Removed</th><th>Actions</th></tr></thead><tbody>${formerRows||'<tr><td colspan="6" class="empty">No removed VAs</td></tr>'}</tbody></table></div></div>`:'';
     return `<div class="page-head"><div><h1>Team / VAs</h1><p class="muted">${isOwnerUser()?'Manage your team members and workload':'View team workload'}</p></div>${isOwnerUser()?'<button class="btn primary" data-action="invite-va">＋ New VA</button>':''}</div>
-      <div class="card table-card"><div class="table-toolbar"><h3>Team Workload</h3><div class="muted small">${teamMembers.length} members</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Total Tasks</th><th>Open</th><th>Overdue</th><th>Completed Today</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No team members</td></tr>'}</tbody></table></div></div>`;
+      <div class="card table-card"><div class="table-toolbar"><h3>Team Workload</h3><div class="muted small">${teamMembers.length} members</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Total Tasks</th><th>Open</th><th>Overdue</th><th>Completed Today</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No team members</td></tr>'}</tbody></table></div></div>${formerCard}`;
   }
 
   function calendarPage(){
@@ -286,7 +290,8 @@
 
   function renderAccessBlocked(){
     const removed=state.profile?.removed===true;
-    app.innerHTML=`<div class="auth-page"><div class="auth-card"><h1>${removed?'Agency access removed':'Agency access paused'}</h1><p class="muted">${removed?'The agency owner removed this login from the team.':'The agency owner paused this login.'} You no longer have access to agency accounts, tasks, notes, or reports.</p><button class="btn primary" style="width:100%;margin-top:10px" id="blockedSignout">Sign Out</button></div></div>`;
+    app.innerHTML=`<div class="auth-page"><div class="auth-card"><h1>${removed?'Agency access removed':'Agency access paused'}</h1><p class="muted">${removed?'The agency owner removed this login from the team. Ask the owner to restore your access from Team / VAs → Former / Removed VAs.':'The agency owner paused this login.'} Once access is restored, use the button below to enter again with the same email and password.</p><button class="btn primary" style="width:100%;margin-top:10px" id="checkAccessAgain">Check Access Again</button><button class="btn" style="width:100%;margin-top:10px" id="blockedSignout">Sign Out</button></div></div>`;
+    document.getElementById('checkAccessAgain').onclick=async()=>{ await loadData(); };
     document.getElementById('blockedSignout').onclick=()=>sb.auth.signOut();
   }
 
@@ -314,6 +319,7 @@
     document.querySelectorAll('[data-open-account]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.openAccount; location.hash='#/tasks';});
     document.querySelectorAll('[data-account-tasks]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.accountTasks; location.hash='#/tasks';});
     document.querySelectorAll('[data-edit-member]').forEach(x=>x.onclick=()=>memberModal(state.team.find(m=>m.id===x.dataset.editMember)));
+    document.querySelectorAll('[data-restore-member]').forEach(x=>x.onclick=()=>restoreMemberData(state.team.find(m=>m.id===x.dataset.restoreMember)));
     ['fAccount','fAssignee','fStatus','fPriority','fSource'].forEach(id=>{const el=document.getElementById(id); if(el)el.onchange=e=>{const key={fAccount:'account',fAssignee:'assignee',fStatus:'status',fPriority:'priority',fSource:'source'}[id];state.filters[key]=e.target.value;render();};});
     document.querySelector('[data-action="save-profile"]')?.addEventListener('click',saveProfile);
     document.querySelector('[data-action="save-agency"]')?.addEventListener('click',saveAgency);
@@ -516,6 +522,20 @@
     }
     const {error}=await sb.rpc('owner_remove_member',{p_member_id:m.id});
     if(error)toast(error.message);else{closeModalFn();await loadData();toast('VA removed and access revoked');}
+  }
+
+  async function restoreMemberData(m){
+    if(!isOwnerUser()){toast('Only the owner can restore VA access.');return;}
+    if(!m || m.role==='owner' || m.id===state.agency?.owner_id){toast('This account cannot be restored as a VA.');return;}
+    if(m.removed!==true){toast('This team member already has agency access.');return;}
+    if(!confirm(`Restore agency access for ${m.full_name||m.email||'this VA'}? They can sign in again with the same email and password. Previously unassigned tasks will stay unassigned until you assign them again.`))return;
+    if(state.demo){
+      const i=state.team.findIndex(x=>x.id===m.id);
+      if(i>=0)state.team[i]={...state.team[i],active:true,removed:false,restored_at:new Date().toISOString(),restored_by:state.profile.id};
+      persistDemo();render();toast('VA access restored');return;
+    }
+    const {error}=await sb.rpc('owner_restore_member',{p_member_id:m.id});
+    if(error)toast(error.message);else{await loadData();toast('VA access restored. They can use the same login again.');}
   }
 
   async function saveProfile(){const name=document.getElementById('setName').value.trim();if(state.demo){state.profile.full_name=name;const i=state.team.findIndex(m=>m.id===state.profile.id);if(i>=0)state.team[i].full_name=name;persistDemo();render();toast('Profile saved');return;}const {error}=await sb.rpc('update_my_profile',{p_full_name:name});if(error)toast(error.message);else{await loadData();toast('Profile saved');}}
