@@ -1,12 +1,13 @@
-MANAGER ROLE UPDATE
+CLIENT-FIRST ACCOUNTS + REFRESH LOGIN FLASH FIX
 
-1. Extract this ZIP.
-2. Upload all files to the SAME GitHub repository root and replace same-name files.
-3. Commit changes.
-4. Wait 1-2 minutes for GitHub Pages, then hard refresh (Ctrl+F5).
-5. Firebase Console -> Firestore Database -> Rules.
-6. Replace all current rules with the new firestore.rules and click Publish.
-7. Owner -> Team / VAs -> Edit a VA -> Role: Manager -> Save.
-8. Refresh the Manager login and test accounts/tasks/team access.
+1. Upload/replace all files in the same GitHub repository root.
+2. Commit changes and wait for GitHub Pages to deploy.
+3. Hard refresh once (Ctrl+F5).
+4. No Firestore Rules change is required for this update.
 
-Important: Managers have full operational access, but only the Owner can grant/remove the Manager role or manage another Manager account.
+What changed:
+- Accounts tab now opens with Client Names first.
+- Click a client to see only that client's Amazon accounts.
+- Back to Clients button and client switch dropdown added.
+- Refresh now shows a short Loading workspace screen instead of flashing the Login page.
+- Current hash route is restored before the first dashboard render.

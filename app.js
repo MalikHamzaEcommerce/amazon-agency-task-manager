@@ -191,12 +191,33 @@
   }
 
   function accountsPage(){
-    const rows=state.accounts.filter(a=>matchesGlobal([a.account_name,a.client_name,a.marketplace,a.status])).map(a=>{
+    const clientLabel=a=>(a?.client_name||'').trim() || 'Unassigned Client';
+    const params=new URLSearchParams((location.hash.split('?')[1]||''));
+    const selectedClient=params.get('client')||'';
+    const clientNames=[...new Set(state.accounts.map(clientLabel))].sort((a,b)=>a.localeCompare(b));
+
+    if(!selectedClient){
+      const clients=clientNames.map(name=>{
+        const accounts=state.accounts.filter(a=>clientLabel(a)===name);
+        const taskIds=new Set(accounts.map(a=>a.id));
+        const tasks=state.tasks.filter(t=>taskIds.has(t.account_id));
+        const active=accounts.filter(a=>String(a.status||'').toLowerCase()==='active').length;
+        const open=tasks.filter(t=>t.status!=='Complete').length;
+        return {name,accounts,active,open};
+      }).filter(c=>matchesGlobal([c.name,...c.accounts.flatMap(a=>[a.account_name,a.marketplace,a.status])]))
+        .sort((a,b)=>a.name.localeCompare(b.name));
+      const rows=clients.map(c=>`<tr class="clickable-row" data-view-client="${esc(c.name)}"><td><span class="link" data-view-client="${esc(c.name)}"><b>${esc(c.name)}</b></span></td><td>${c.accounts.length}</td><td>${c.active}</td><td>${c.open}</td><td><button class="btn small" data-view-client="${esc(c.name)}">View Accounts</button></td></tr>`).join('');
+      return `<div class="page-head"><div><h1>Accounts</h1><p class="muted">Choose a client first, then view all Amazon accounts for that client.</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-account">＋ New Account</button>':''}</div>
+        <div class="card table-card"><div class="table-toolbar"><div><h3>Clients</h3><div class="muted small">${clientNames.length} clients · ${state.accounts.length} accounts</div></div><div class="client-jump"><label for="clientJump" class="small muted">Quick select</label><select id="clientJump"><option value="">Select Client</option>${clientNames.map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join('')}</select></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Client Name</th><th>Accounts</th><th>Active Accounts</th><th>Open Tasks</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No clients found</td></tr>'}</tbody></table></div></div>`;
+    }
+
+    const accounts=state.accounts.filter(a=>clientLabel(a)===selectedClient).filter(a=>matchesGlobal([a.account_name,a.client_name,a.marketplace,a.status]));
+    const rows=accounts.map(a=>{
       const all=state.tasks.filter(t=>t.account_id===a.id); const open=all.filter(t=>t.status!=='Complete').length;
-      return `<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.client_name||'—')}</td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${all.length}</td><td>${open}</td><td>${hasFullAccess()?`<button class="btn small" data-edit-account="${a.id}">Edit</button> `:''}<button class="btn small" data-account-tasks="${a.id}">Tasks</button></td></tr>`;
+      return `<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${all.length}</td><td>${open}</td><td>${hasFullAccess()?`<button class="btn small" data-edit-account="${a.id}">Edit</button> `:''}<button class="btn small" data-account-tasks="${a.id}">Tasks</button></td></tr>`;
     }).join('');
-    return `<div class="page-head"><div><h1>Accounts</h1><p class="muted">${hasFullAccess()?'Manage all Amazon client accounts':'View Amazon client accounts'}</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-account">＋ New Account</button>':''}</div>
-      <div class="card table-card"><div class="table-toolbar"><h3>All Accounts</h3><div class="muted small">${state.accounts.length} accounts</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Account Name</th><th>Client</th><th>Marketplace</th><th>Status</th><th>Total Tasks</th><th>Open Tasks</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="empty">No accounts found</td></tr>'}</tbody></table></div></div>`;
+    return `<div class="page-head client-account-head"><div><button class="btn back-btn" data-back-clients>← Back to Clients</button><h1>${esc(selectedClient)}</h1><p class="muted">${accounts.length} account${accounts.length===1?'':'s'} for this client</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-account">＋ New Account</button>':''}</div>
+      <div class="card table-card"><div class="table-toolbar"><div><h3>${esc(selectedClient)} Accounts</h3><div class="muted small">Switch clients anytime without leaving the Accounts tab.</div></div><div class="client-jump"><label for="clientJump" class="small muted">Client</label><select id="clientJump"><option value="">All Clients</option>${clientNames.map(name=>`<option value="${esc(name)}" ${name===selectedClient?'selected':''}>${esc(name)}</option>`).join('')}</select></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Account Name</th><th>Marketplace</th><th>Status</th><th>Total Tasks</th><th>Open Tasks</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">No accounts found for this client</td></tr>'}</tbody></table></div></div>`;
   }
 
   function taskFilters(){
@@ -333,6 +354,9 @@
     document.querySelectorAll('[data-open-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.openTask)));
     document.querySelectorAll('[data-edit-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.editTask)));
     document.querySelectorAll('[data-edit-account]').forEach(x=>x.onclick=()=>accountModal(state.accounts.find(a=>a.id===x.dataset.editAccount)));
+    document.querySelectorAll('[data-view-client]').forEach(x=>x.onclick=e=>{e.stopPropagation(); const name=x.dataset.viewClient||''; if(name) location.hash='#/accounts?client='+encodeURIComponent(name);});
+    document.querySelector('[data-back-clients]')?.addEventListener('click',()=>{location.hash='#/accounts';});
+    const clientJump=document.getElementById('clientJump'); if(clientJump) clientJump.onchange=e=>{const name=e.target.value; location.hash=name?'#/accounts?client='+encodeURIComponent(name):'#/accounts';};
     document.querySelectorAll('[data-open-account]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.openAccount; location.hash='#/tasks';});
     document.querySelectorAll('[data-account-tasks]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.accountTasks; location.hash='#/tasks';});
     document.querySelectorAll('[data-edit-member]').forEach(x=>x.onclick=()=>memberModal(state.team.find(m=>m.id===x.dataset.editMember)));
@@ -581,14 +605,27 @@
     render();
   }
 
-  function routeFromHash(){const r=(location.hash.replace(/^#\//,'')||'dashboard').split('?')[0];state.route=navItems().some(([x])=>x===r)?r:'dashboard';render();}
-  window.addEventListener('hashchange',routeFromHash);
+  function routeFromHash(renderNow=true){
+    const r=(location.hash.replace(/^#\//,'')||'dashboard').split('?')[0];
+    state.route=navItems().some(([x])=>x===r)?r:'dashboard';
+    if(renderNow)render();
+  }
+  window.addEventListener('hashchange',()=>routeFromHash(true));
 
   async function init(){
-    if(state.demo){seedDemo();routeFromHash();return;}
-    sb.auth.onAuthStateChange(async()=>{await loadData();});
+    routeFromHash(false);
+    if(state.demo){seedDemo();render();return;}
+    // Wait for Firebase Auth to restore the persisted session before the first render.
+    // This prevents the sign-in page from flashing for already signed-in Owner/Manager/VA users.
+    let firstAuthEvent=true;
+    await new Promise(resolve=>{
+      sb.auth.onAuthStateChange(async()=>{
+        if(firstAuthEvent){firstAuthEvent=false;resolve();return;}
+        routeFromHash(false);
+        await loadData();
+      });
+    });
     await loadData();
-    routeFromHash();
   }
 
   init();

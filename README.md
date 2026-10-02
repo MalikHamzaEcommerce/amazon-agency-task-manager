@@ -49,3 +49,11 @@ Upload/replace these files in the repository root:
 After uploading to GitHub, open **Firebase Console -> Firestore Database -> Rules** and replace the current rules with the complete contents of the new `firestore.rules`, then click **Publish**.
 
 The UI restrictions and Firestore security rules both enforce the Owner / Manager / VA hierarchy.
+
+
+## Latest update: Client-first Accounts + smooth refresh
+- Accounts opens with a list of clients first.
+- Selecting a client drills into that client's accounts.
+- Back button and quick client switcher are included.
+- Firebase Auth hydration is awaited on refresh, preventing the login screen from flashing for signed-in users.
+- Existing route/hash is restored before the first app render.

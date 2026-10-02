@@ -6,6 +6,15 @@
   const auth = firebase.auth();
   const db = firebase.firestore();
 
+  let initialAuthResolved = false;
+  const initialAuthReady = new Promise(resolve => {
+    let unsubscribe = () => {};
+    unsubscribe = auth.onAuthStateChanged(
+      user => { initialAuthResolved = true; unsubscribe(); resolve(user || null); },
+      () => { initialAuthResolved = true; unsubscribe(); resolve(null); }
+    );
+  });
+
   const nowIso = () => new Date().toISOString();
   const wrapError = (e) => ({ error: { message: e?.message || String(e) } });
   const mapUser = (u) => u ? ({ id: u.uid, uid: u.uid, email: u.email || '' }) : null;
@@ -325,6 +334,7 @@
   const client = {
     auth: {
       async getSession() {
+        if (!initialAuthResolved) await initialAuthReady;
         const user = auth.currentUser;
         return { data: { session: user ? { user: mapUser(user) } : null }, error: null };
       },
