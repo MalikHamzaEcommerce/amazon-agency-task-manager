@@ -50,3 +50,14 @@ This is the consolidated Firebase version of the dashboard.
 The Firebase web config in `config.js` is client configuration and is expected to be visible in a browser. Actual access control is enforced through Firebase Authentication and the `firestore.rules` security rules.
 
 Do not put Seller Central passwords, OTPs, banking details, service-account credentials or other secrets into task notes.
+
+## Status color highlighting
+Task rows and calendar items are color-coded automatically:
+- Complete: green
+- In Progress: blue
+- Waiting on Client: purple
+- Not Started: amber
+- Blocked / Overdue: red
+
+## Owner: remove a VA
+The owner can open **Team / VAs -> Edit -> Remove VA**. Removal is a secure soft-delete: the VA immediately loses agency access, disappears from the active team, and any open tasks assigned to that VA become unassigned. Completed-task attribution and task-note history remain available for audit/history. Firebase Authentication does not allow one browser user to delete another user's Auth account directly, so the login record remains in Firebase Auth but cannot access agency data.

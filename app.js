@@ -80,8 +80,11 @@
   function fmtDate(v){ if(!v) return '—'; const d=new Date(v+'T00:00:00'); return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
   function accountById(id){ return state.accounts.find(a=>a.id===id); }
   function memberById(id){ return state.team.find(m=>m.id===id); }
+  function visibleTeam(){ return state.team.filter(m=>m.removed!==true); }
+  function activeTeam(){ return visibleTeam().filter(m=>m.active!==false); }
   function isOverdue(t){ return t.status!=='Complete' && t.due_date && t.due_date < today(); }
   function displayStatus(t){ return isOverdue(t) ? 'Overdue' : t.status; }
+  function taskStatusClass(t){ return `status-${slug(displayStatus(t))}`; }
   function initials(name=''){ return name.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase() || 'U'; }
   function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
   function isOwnerUser(){ return state.profile?.role === 'owner'; }
@@ -133,7 +136,7 @@
 
   function dashboardPage(){
     const c=metricCounts();
-    const teamCounts=state.team.map(m=>({m,count:state.tasks.filter(t=>t.assigned_to===m.id && t.status!=='Complete').length})).sort((a,b)=>b.count-a.count);
+    const teamCounts=activeTeam().map(m=>({m,count:state.tasks.filter(t=>t.assigned_to===m.id && t.status!=='Complete').length})).sort((a,b)=>b.count-a.count);
     const sources={}; state.tasks.forEach(t=>sources[t.source]=(sources[t.source]||0)+1);
     const maxTeam=Math.max(1,...teamCounts.map(x=>x.count));
     const maxSource=Math.max(1,...Object.values(sources));
@@ -182,7 +185,7 @@
     const vals=(arr,key)=>[...new Set(arr.map(x=>x[key]).filter(Boolean))].sort();
     return `<div class="filters">
       <select id="fAccount"><option value="">All Accounts</option>${state.accounts.map(a=>`<option value="${a.id}" ${state.filters.account===a.id?'selected':''}>${esc(a.account_name)}</option>`).join('')}</select>
-      <select id="fAssignee"><option value="">All VAs</option>${state.team.map(m=>`<option value="${m.id}" ${state.filters.assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select>
+      <select id="fAssignee"><option value="">All VAs</option>${visibleTeam().map(m=>`<option value="${m.id}" ${state.filters.assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select>
       <select id="fStatus"><option value="">All Status</option>${['Not Started','In Progress','Waiting on Client','Blocked','Complete'].map(v=>`<option ${state.filters.status===v?'selected':''}>${v}</option>`).join('')}</select>
       <select id="fPriority"><option value="">All Priority</option>${['High','Medium','Low'].map(v=>`<option ${state.filters.priority===v?'selected':''}>${v}</option>`).join('')}</select>
       <select id="fSource"><option value="">All Sources</option>${vals(state.tasks,'source').map(v=>`<option ${state.filters.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>
@@ -204,7 +207,7 @@
       const a=accountById(t.account_id);
       const m=memberById(t.assigned_to);
       const action = isOwnerUser() ? 'Edit' : (t.assigned_to===state.profile?.id ? 'Update Status' : 'View');
-      return `<tr>
+      return `<tr class="task-row ${taskStatusClass(t)}">
       <td>${i+1}</td><td><span class="link" data-open-task="${t.id}">${esc(t.title)}</span></td><td>${a?`<span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span>`:'—'}</td><td>${esc(a?.client_name||'—')}</td><td>${m?`<span class="avatar" style="display:inline-grid;width:26px;height:26px;font-size:10px;margin-right:6px">${initials(m.full_name)}</span>${esc(m.full_name)}`:'Unassigned'}</td><td>${esc(t.source||'—')}</td><td>${badge(t.priority)}</td><td class="${isOverdue(t)?'danger':''}">${fmtDate(t.due_date)}</td><td>${badge(displayStatus(t))}</td><td><button class="btn small" data-open-task="${t.id}">${action}</button></td></tr>`; }).join('');
     return `<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Task</th><th>Account</th><th>Client</th><th>Assigned To</th><th>Source</th><th>Priority</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No tasks found</td></tr>'}</tbody></table></div>`;
   }
@@ -220,12 +223,13 @@
   }
 
   function teamPage(){
-    const rows=state.team.filter(m=>matchesGlobal([m.full_name,m.email,m.role])).map((m,i)=>{
+    const teamMembers=visibleTeam();
+    const rows=teamMembers.filter(m=>matchesGlobal([m.full_name,m.email,m.role])).map((m,i)=>{
       const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>t.status!=='Complete').length, overdue=all.filter(isOverdue).length, completeToday=all.filter(t=>t.status==='Complete' && (t.completed_at||'').slice(0,10)===today()).length;
       return `<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role))}</td><td>${all.length}</td><td>${open}</td><td class="${overdue?'danger':''}">${overdue}</td><td>${completeToday}</td><td>${m.active?badge('Active'):badge('Paused')}</td>${state.profile?.role==='owner'?`<td><button class="btn small" data-edit-member="${m.id}">Edit</button></td>`:'<td>—</td>'}</tr>`;
     }).join('');
     return `<div class="page-head"><div><h1>Team / VAs</h1><p class="muted">${isOwnerUser()?'Manage your team members and workload':'View team workload'}</p></div>${isOwnerUser()?'<button class="btn primary" data-action="invite-va">＋ New VA</button>':''}</div>
-      <div class="card table-card"><div class="table-toolbar"><h3>Team Workload</h3><div class="muted small">${state.team.length} members</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Total Tasks</th><th>Open</th><th>Overdue</th><th>Completed Today</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No team members</td></tr>'}</tbody></table></div></div>`;
+      <div class="card table-card"><div class="table-toolbar"><h3>Team Workload</h3><div class="muted small">${teamMembers.length} members</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Total Tasks</th><th>Open</th><th>Overdue</th><th>Completed Today</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No team members</td></tr>'}</tbody></table></div></div>`;
   }
 
   function calendarPage(){
@@ -234,7 +238,7 @@
     for(let day=1;day<=days;day++){
       const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
       const ts=state.tasks.filter(t=>t.due_date===iso);
-      cells.push(`<div class="day"><div class="day-num">${day}</div>${ts.slice(0,4).map(t=>`<div class="cal-task" data-edit-task="${t.id}">${esc(t.title)}</div>`).join('')}${ts.length>4?`<div class="small muted">+${ts.length-4} more</div>`:''}</div>`);
+      cells.push(`<div class="day"><div class="day-num">${day}</div>${ts.slice(0,4).map(t=>`<div class="cal-task ${taskStatusClass(t)}" data-edit-task="${t.id}">${esc(t.title)}</div>`).join('')}${ts.length>4?`<div class="small muted">+${ts.length-4} more</div>`:''}</div>`);
     }
     return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">View task deadlines by date</p></div>${isOwnerUser()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div><div class="card panel"><h3>${now.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</h3><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
   }
@@ -242,7 +246,7 @@
   function reportsPage(){
     const c=metricCounts();
     const byAccount=state.accounts.map(a=>{const ts=state.tasks.filter(t=>t.account_id===a.id);return {a,total:ts.length,complete:ts.filter(t=>t.status==='Complete').length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
-    const byPerson=state.team.map(m=>{const ts=state.tasks.filter(t=>t.assigned_to===m.id);return {m,total:ts.length,complete:ts.filter(t=>t.status==='Complete').length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
+    const byPerson=visibleTeam().map(m=>{const ts=state.tasks.filter(t=>t.assigned_to===m.id);return {m,total:ts.length,complete:ts.filter(t=>t.status==='Complete').length,overdue:ts.filter(isOverdue).length}}).sort((x,y)=>y.total-x.total);
     return `<div class="page-head"><div><h1>Reports</h1><p class="muted">Agency task and workload insights</p></div></div>
       <div class="grid kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpi('Total Tasks',c.total,'blue')}${kpi('Completed',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Overdue',c.overdue,'red')}</div>
       <div class="grid report-grid">
@@ -264,6 +268,7 @@
   function render(){
     let content='';
     if(!state.demo && !state.user){ renderAuth(); return; }
+    if(!state.demo && state.user && state.profile && (state.profile.removed===true || state.profile.active===false)){ renderAccessBlocked(); return; }
     if(!state.demo && state.user && state.profile && !state.profile.agency_id){ renderOnboarding(); return; }
     switch(state.route){
       case 'accounts':content=accountsPage();break;
@@ -277,6 +282,12 @@
     }
     app.innerHTML=shell(content);
     bindCommon();
+  }
+
+  function renderAccessBlocked(){
+    const removed=state.profile?.removed===true;
+    app.innerHTML=`<div class="auth-page"><div class="auth-card"><h1>${removed?'Agency access removed':'Agency access paused'}</h1><p class="muted">${removed?'The agency owner removed this login from the team.':'The agency owner paused this login.'} You no longer have access to agency accounts, tasks, notes, or reports.</p><button class="btn primary" style="width:100%;margin-top:10px" id="blockedSignout">Sign Out</button></div></div>`;
+    document.getElementById('blockedSignout').onclick=()=>sb.auth.signOut();
   }
 
   function renderAuth(){
@@ -408,8 +419,8 @@
     const edit=!!t; const x=t||{title:'',account_id:state.filters.account||'',assigned_to:'',received_by:state.profile?.id||'',source:'Internal',status:'Not Started',priority:'Medium',due_date:today(),description:'',recurring:false,recurrence:''};
     modal(edit?'Edit Task':'New Task',`<form id="taskForm">
       <div class="field"><label>Task</label><input id="taskTitle" value="${esc(x.title)}" required placeholder="e.g. PPC campaign optimization"></div>
-      <div class="two"><div class="field"><label>Account</label><select id="taskAccount" required><option value="">Select account</option>${state.accounts.map(a=>`<option value="${a.id}" ${x.account_id===a.id?'selected':''}>${esc(a.account_name)} — ${esc(a.client_name||'')}</option>`).join('')}</select></div><div class="field"><label>Assigned To</label><select id="taskAssignee"><option value="">Unassigned</option>${state.team.filter(m=>m.active!==false).map(m=>`<option value="${m.id}" ${x.assigned_to===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
-      <div class="two"><div class="field"><label>Task Source</label><select id="taskSource">${['Email','Slack','WhatsApp','Upwork','Fiverr','Client Portal','Call','Internal','Other'].map(v=>`<option ${x.source===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Received By</label><select id="taskReceived"><option value="">Not set</option>${state.team.map(m=>`<option value="${m.id}" ${x.received_by===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Account</label><select id="taskAccount" required><option value="">Select account</option>${state.accounts.map(a=>`<option value="${a.id}" ${x.account_id===a.id?'selected':''}>${esc(a.account_name)} — ${esc(a.client_name||'')}</option>`).join('')}</select></div><div class="field"><label>Assigned To</label><select id="taskAssignee"><option value="">Unassigned</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.assigned_to===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Task Source</label><select id="taskSource">${['Email','Slack','WhatsApp','Upwork','Fiverr','Client Portal','Call','Internal','Other'].map(v=>`<option ${x.source===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Received By</label><select id="taskReceived"><option value="">Not set</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.received_by===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Status</label><select id="taskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Complete'].map(v=>`<option ${x.status===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Priority</label><select id="taskPriority">${['High','Medium','Low'].map(v=>`<option ${x.priority===v?'selected':''}>${v}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Due Date</label><input id="taskDue" type="date" value="${esc(x.due_date||'')}"></div><div class="field"><label>Recurring</label><select id="taskRecurring"><option value="false" ${!x.recurring?'selected':''}>No</option><option value="true" ${x.recurring?'selected':''}>Yes</option></select></div></div>
       <div class="field"><label>Recurrence</label><select id="taskRecurrence"><option value="">None</option>${['Daily','Weekly','Monthly'].map(v=>`<option ${x.recurrence===v?'selected':''}>${v}</option>`).join('')}</select></div>
@@ -458,9 +469,54 @@
 
   function memberModal(m){
     if(!isOwnerUser()){toast('Only the owner can manage team members.');return;}
-    if(!m)return;modal('Edit Team Member',`<div class="field"><label>Name</label><input id="memberName" value="${esc(m.full_name||'')}"></div><div class="field"><label>Email</label><input value="${esc(m.email||'')}" disabled></div><div class="field"><label>Role</label><select id="memberRole">${['owner','manager','va'].map(v=>`<option value="${v}" ${m.role===v?'selected':''}>${cap(v)}</option>`).join('')}</select></div><div class="field"><label>Status</label><select id="memberActive"><option value="true" ${m.active!==false?'selected':''}>Active</option><option value="false" ${m.active===false?'selected':''}>Paused</option></select></div>`,`<button class="btn" id="cancelMember">Cancel</button><button class="btn primary" id="saveMember">Save</button>`);cancelMember.onclick=closeModalFn;saveMember.onclick=()=>saveMemberData(m.id);
+    if(!m)return;
+    const isAgencyOwner=m.id===state.agency?.owner_id || m.role==='owner';
+    const roleField=isAgencyOwner
+      ? `<div class="field"><label>Role</label><input value="Owner" disabled></div>`
+      : `<div class="field"><label>Role</label><select id="memberRole">${['manager','va'].map(v=>`<option value="${v}" ${m.role===v?'selected':''}>${cap(v)}</option>`).join('')}</select></div>`;
+    const statusField=isAgencyOwner
+      ? `<div class="field"><label>Status</label><input value="Active" disabled></div>`
+      : `<div class="field"><label>Status</label><select id="memberActive"><option value="true" ${m.active!==false?'selected':''}>Active</option><option value="false" ${m.active===false?'selected':''}>Paused</option></select></div>`;
+    const removeBtn=isAgencyOwner?'':`<button class="btn red" id="removeMember">Remove VA</button>`;
+    modal('Edit Team Member',`<div class="field"><label>Name</label><input id="memberName" value="${esc(m.full_name||'')}"></div><div class="field"><label>Email</label><input value="${esc(m.email||'')}" disabled></div>${roleField}${statusField}`,`${removeBtn}<button class="btn" id="cancelMember">Cancel</button><button class="btn primary" id="saveMember">Save</button>`);
+    cancelMember.onclick=closeModalFn;
+    saveMember.onclick=()=>saveMemberData(m.id,isAgencyOwner);
+    if(!isAgencyOwner) removeMember.onclick=()=>removeMemberData(m);
   }
-  async function saveMemberData(id){const data={full_name:memberName.value.trim(),role:memberRole.value,active:memberActive.value==='true'};if(state.demo){const i=state.team.findIndex(m=>m.id===id);state.team[i]={...state.team[i],...data};if(state.profile.id===id)state.profile=state.team[i];persistDemo();closeModalFn();render();return;}const {error}=await sb.rpc('owner_update_member',{p_member_id:id,p_full_name:data.full_name,p_role:data.role,p_active:data.active});if(error)toast(error.message);else{closeModalFn();await loadData();toast('Team member updated');}}
+
+  async function saveMemberData(id,isAgencyOwner=false){
+    const data={
+      full_name:memberName.value.trim(),
+      role:isAgencyOwner?'owner':memberRole.value,
+      active:isAgencyOwner?true:memberActive.value==='true'
+    };
+    if(state.demo){
+      const i=state.team.findIndex(m=>m.id===id);
+      state.team[i]={...state.team[i],...data};
+      if(state.profile.id===id)state.profile=state.team[i];
+      persistDemo();closeModalFn();render();return;
+    }
+    const {error}=await sb.rpc('owner_update_member',{p_member_id:id,p_full_name:data.full_name,p_role:data.role,p_active:data.active});
+    if(error)toast(error.message);else{closeModalFn();await loadData();toast('Team member updated');}
+  }
+
+  async function removeMemberData(m){
+    if(!isOwnerUser()){toast('Only the owner can remove VAs.');return;}
+    if(!m || m.id===state.agency?.owner_id || m.role==='owner'){toast('The agency owner cannot be removed.');return;}
+    const openCount=state.tasks.filter(t=>t.assigned_to===m.id && t.status!=='Complete').length;
+    const message=openCount
+      ? `Remove ${m.full_name||'this VA'} from the agency? ${openCount} open task${openCount===1?'':'s'} will be unassigned. Completed task history and notes will be kept.`
+      : `Remove ${m.full_name||'this VA'} from the agency? Their access will be revoked immediately. Completed task history and notes will be kept.`;
+    if(!confirm(message))return;
+    if(state.demo){
+      const i=state.team.findIndex(x=>x.id===m.id);
+      if(i>=0)state.team[i]={...state.team[i],active:false,removed:true,removed_at:new Date().toISOString(),removed_by:state.profile.id};
+      state.tasks=state.tasks.map(t=>(t.assigned_to===m.id && t.status!=='Complete')?{...t,assigned_to:null}:t);
+      persistDemo();closeModalFn();render();toast('VA removed');return;
+    }
+    const {error}=await sb.rpc('owner_remove_member',{p_member_id:m.id});
+    if(error)toast(error.message);else{closeModalFn();await loadData();toast('VA removed and access revoked');}
+  }
 
   async function saveProfile(){const name=document.getElementById('setName').value.trim();if(state.demo){state.profile.full_name=name;const i=state.team.findIndex(m=>m.id===state.profile.id);if(i>=0)state.team[i].full_name=name;persistDemo();render();toast('Profile saved');return;}const {error}=await sb.rpc('update_my_profile',{p_full_name:name});if(error)toast(error.message);else{await loadData();toast('Profile saved');}}
   async function saveAgency(){if(!isOwnerUser()){toast('Only the owner can edit agency settings.');return;}const name=document.getElementById('agencyName').value.trim();if(!name)return;if(state.demo){state.agency.name=name;persistDemo();render();toast('Agency saved');return;}const {error}=await sb.from('agencies').update({name}).eq('id',state.agency.id);if(error)toast(error.message);else{await loadData();toast('Agency saved');}}
@@ -471,6 +527,7 @@
     if(!state.user){state.profile=null;state.agency=null;state.accounts=[];state.tasks=[];state.team=[];render();return;}
     const {data:profile,error:pErr}=await sb.from('profiles').select('*').eq('id',state.user.id).single();
     if(pErr){toast(pErr.message);return;} state.profile=profile;
+    if(profile.removed===true || profile.active===false){state.agency=null;state.accounts=[];state.tasks=[];state.team=[profile];render();return;}
     if(!profile.agency_id){state.agency=null;state.accounts=[];state.tasks=[];state.team=[profile];render();return;}
     const [agencyRes,accountsRes,tasksRes,teamRes]=await Promise.all([
       sb.from('agencies').select('*').eq('id',profile.agency_id).single(),

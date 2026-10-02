@@ -29,20 +29,31 @@ service cloud.firestore {
       return myProfile().agency_id;
     }
 
+    function isActiveMember() {
+      return signedIn()
+        && myProfile().agency_id != null
+        && myProfile().active == true
+        && (!("removed" in myProfile()) || myProfile().removed != true);
+    }
+
     function isOwner() {
-      return signedIn() && myProfile().role == 'owner';
+      return isActiveMember() && myProfile().role == 'owner';
     }
 
     function sameAgency(agencyId) {
-      return signedIn() && agencyId != null && agencyId == myAgency();
+      return isActiveMember() && agencyId != null && agencyId == myAgency();
     }
 
     match /profiles/{uid} {
       allow create: if signedIn()
         && request.auth.uid == uid
         && request.resource.data.agency_id == null
-        && request.resource.data.role == 'va';
+        && request.resource.data.role == 'va'
+        && request.resource.data.active == true
+        && request.resource.data.removed == false;
 
+      // A user may always read their own profile so a removed/paused login can
+      // receive the correct access message. Active agency members may read teammates.
       allow get: if signedIn() && (
         request.auth.uid == uid ||
         sameAgency(resource.data.agency_id)
@@ -51,31 +62,65 @@ service cloud.firestore {
       allow list: if signedIn() && sameAgency(resource.data.agency_id);
 
       allow update: if signedIn() && (
-        // Anyone may change only their own display name while keeping access fields fixed.
+        // A user may change only their own display name.
         (request.auth.uid == uid
-          && request.resource.data.agency_id == resource.data.agency_id
-          && request.resource.data.role == resource.data.role
-          && request.resource.data.active == resource.data.active)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['full_name']))
         ||
         // First-time owner setup.
         (request.auth.uid == uid
           && resource.data.agency_id == null
+          && resource.data.role == 'va'
+          && resource.data.active == true
+          && resource.data.removed == false
           && request.resource.data.role == 'owner'
           && request.resource.data.agency_id != null
+          && request.resource.data.active == true
+          && request.resource.data.removed == false
           && getAfter(agencyPath(request.resource.data.agency_id)).data.owner_id == request.auth.uid)
         ||
         // First-time VA join using the exact invite code.
         (request.auth.uid == uid
           && resource.data.agency_id == null
+          && resource.data.role == 'va'
+          && resource.data.active == true
+          && resource.data.removed == false
           && request.resource.data.role == 'va'
+          && request.resource.data.active == true
+          && request.resource.data.removed == false
           && request.resource.data.join_code is string
           && get(invitePath(request.resource.data.join_code)).data.active == true
           && get(invitePath(request.resource.data.join_code)).data.agency_id == request.resource.data.agency_id)
         ||
-        // Only the owner may manage members in the same agency.
+        // Owner may edit a current teammate's name/role/status, but may not
+        // demote or pause the agency owner account.
         (isOwner()
           && resource.data.agency_id == myAgency()
-          && request.resource.data.agency_id == resource.data.agency_id)
+          && (!("removed" in resource.data) || resource.data.removed != true)
+          && request.resource.data.agency_id == resource.data.agency_id
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['full_name', 'role', 'active'])
+          && (
+            (uid == request.auth.uid
+              && resource.data.role == 'owner'
+              && request.resource.data.role == 'owner'
+              && request.resource.data.active == true)
+            ||
+            (uid != request.auth.uid
+              && resource.data.role != 'owner'
+              && request.resource.data.role in ['va', 'manager'])
+          ))
+        ||
+        // Owner may remove a non-owner teammate. This is a secure soft-delete:
+        // the profile remains for audit/history but loses all agency access.
+        (isOwner()
+          && uid != request.auth.uid
+          && resource.data.agency_id == myAgency()
+          && resource.data.role != 'owner'
+          && request.resource.data.agency_id == resource.data.agency_id
+          && request.resource.data.active == false
+          && request.resource.data.removed == true
+          && request.resource.data.removed_by == request.auth.uid
+          && request.resource.data.removed_at is string
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'removed', 'removed_at', 'removed_by']))
       );
 
       allow delete: if false;
@@ -84,10 +129,7 @@ service cloud.firestore {
     match /agencies/{agencyId} {
       allow create: if signedIn()
         && request.resource.data.owner_id == request.auth.uid;
-      allow read: if signedIn() && (
-        resource.data.owner_id == request.auth.uid ||
-        agencyId == myAgency()
-      );
+      allow read: if sameAgency(agencyId);
       allow update: if isOwner()
         && agencyId == myAgency()
         && request.resource.data.owner_id == resource.data.owner_id;
@@ -95,7 +137,7 @@ service cloud.firestore {
     }
 
     match /agency_invites/{code} {
-      // A signed-in user may validate only a code they already know.
+      // A signed-in, not-yet-attached user may validate a code they already know.
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn()
@@ -107,7 +149,6 @@ service cloud.firestore {
     }
 
     match /accounts/{id} {
-      // VAs may view accounts, but only the owner may create/edit/delete them.
       allow read: if sameAgency(resource.data.agency_id);
       allow create: if isOwner()
         && request.resource.data.agency_id == myAgency();
@@ -119,16 +160,13 @@ service cloud.firestore {
     }
 
     match /task_notes/{id} {
-      // Notes are private to the agency owner and the VA currently assigned to the task.
       allow read: if signedIn()
-        && get(taskPath(resource.data.task_id)).data.agency_id == myAgency()
+        && sameAgency(get(taskPath(resource.data.task_id)).data.agency_id)
         && (
           isOwner()
           || get(taskPath(resource.data.task_id)).data.assigned_to == request.auth.uid
         );
 
-      // Notes are append-only. Owner may comment on any agency task; a VA may comment only
-      // on a task assigned to their own login.
       allow create: if signedIn()
         && request.resource.data.agency_id == myAgency()
         && request.resource.data.author_id == request.auth.uid
@@ -136,26 +174,21 @@ service cloud.firestore {
         && request.resource.data.note is string
         && request.resource.data.note.size() > 0
         && request.resource.data.note.size() <= 2000
-        && get(taskPath(request.resource.data.task_id)).data.agency_id == myAgency()
+        && sameAgency(get(taskPath(request.resource.data.task_id)).data.agency_id)
         && (
           isOwner()
           || get(taskPath(request.resource.data.task_id)).data.assigned_to == request.auth.uid
         );
 
-      // Keep task notes as an audit trail.
       allow update, delete: if false;
     }
 
     match /tasks/{id} {
-      // Everyone in the agency may view tasks.
       allow read: if sameAgency(resource.data.agency_id);
 
-      // Only the owner creates tasks.
       allow create: if isOwner()
         && request.resource.data.agency_id == myAgency();
 
-      // Owner may edit any task. A VA may change only status/completed_at
-      // on a task that is assigned to their own Firebase UID.
       allow update: if sameAgency(resource.data.agency_id)
         && request.resource.data.agency_id == resource.data.agency_id
         && (
@@ -167,7 +200,6 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at']))
         );
 
-      // Destructive task actions are owner-only.
       allow delete: if isOwner()
         && sameAgency(resource.data.agency_id);
     }

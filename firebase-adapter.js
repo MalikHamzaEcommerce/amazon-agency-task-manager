@@ -21,6 +21,7 @@
         email: user.email || '',
         role: 'va',
         active: true,
+        removed: false,
         agency_id: null,
         created_at: nowIso()
       };
@@ -167,7 +168,7 @@
           active: true,
           created_at: nowIso()
         });
-        batch.update(profileRef, { agency_id: agencyRef.id, role: 'owner', active: true });
+        batch.update(profileRef, { agency_id: agencyRef.id, role: 'owner', active: true, removed: false });
         await batch.commit();
         return { data: agencyRef.id, error: null };
       }
@@ -177,16 +178,50 @@
         const code = String(args.p_invite_code || '').trim().toUpperCase();
         const invite = await db.collection('agency_invites').doc(code).get();
         if (!invite.exists || invite.data().active === false) throw new Error('Invalid or inactive invite code.');
-        await profileRef.update({ agency_id: invite.data().agency_id, role: 'va', active: true, join_code: code });
+        if (profile.removed === true || profile.active === false) throw new Error('Your agency access was removed or paused. Ask the agency owner to restore your access.');
+        await profileRef.update({ agency_id: invite.data().agency_id, role: 'va', active: true, removed: false, join_code: code });
         return { data: invite.data().agency_id, error: null };
       }
 
       if (name === 'owner_update_member') {
-        if (profile.role !== 'owner') throw new Error('Only the agency owner can edit team members.');
+        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active agency owner can edit team members.');
         const targetRef = db.collection('profiles').doc(args.p_member_id);
         const target = await targetRef.get();
         if (!target.exists || target.data().agency_id !== profile.agency_id) throw new Error('Team member not found.');
-        await targetRef.update({ full_name: args.p_full_name || '', role: args.p_role || 'va', active: !!args.p_active });
+        if (target.data().removed === true) throw new Error('This team member has already been removed.');
+        const isAgencyOwner = target.id === user.uid || target.data().role === 'owner';
+        const patch = isAgencyOwner
+          ? { full_name: args.p_full_name || target.data().full_name || '', role: 'owner', active: true }
+          : { full_name: args.p_full_name || '', role: args.p_role || 'va', active: !!args.p_active };
+        await targetRef.update(patch);
+        return { data: true, error: null };
+      }
+
+      if (name === 'owner_remove_member') {
+        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active agency owner can remove VAs.');
+        const memberId = String(args.p_member_id || '').trim();
+        if (!memberId) throw new Error('Team member ID is missing.');
+        if (memberId === user.uid) throw new Error('The agency owner cannot remove their own login.');
+        const targetRef = db.collection('profiles').doc(memberId);
+        const targetSnap = await targetRef.get();
+        if (!targetSnap.exists || targetSnap.data().agency_id !== profile.agency_id) throw new Error('Team member not found.');
+        const target = targetSnap.data();
+        if (target.role === 'owner') throw new Error('The agency owner cannot be removed.');
+        if (target.removed === true) return { data: true, error: null };
+
+        const taskSnap = await db.collection('tasks').where('agency_id', '==', profile.agency_id).get();
+        const batch = db.batch();
+        taskSnap.docs.forEach(doc => {
+          const task = doc.data();
+          if (task.assigned_to === memberId && task.status !== 'Complete') batch.update(doc.ref, { assigned_to: null });
+        });
+        batch.update(targetRef, {
+          active: false,
+          removed: true,
+          removed_at: nowIso(),
+          removed_by: user.uid
+        });
+        await batch.commit();
         return { data: true, error: null };
       }
 
