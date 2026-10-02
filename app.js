@@ -84,6 +84,8 @@
   function displayStatus(t){ return isOverdue(t) ? 'Overdue' : t.status; }
   function initials(name=''){ return name.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase() || 'U'; }
   function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
+  function isOwnerUser(){ return state.profile?.role === 'owner'; }
+  function canUpdateTask(t){ return isOwnerUser() || (state.profile?.role === 'va' && t?.assigned_to === state.profile?.id); }
 
   function navItems(){
     return [
@@ -99,11 +101,11 @@
         <aside class="sidebar">
           <div class="brand"><div class="brand-mark">a<span>⌣</span></div><div><div class="brand-title">Amazon</div><div class="brand-sub">Account Task Manager</div></div></div>
           <nav class="nav">${navItems().map(([r,l])=>`<a href="#/${r}" class="${state.route===r?'active':''}"><span>${ICONS[r==='my-tasks'?'my':r]||'•'}</span>${l}</a>`).join('')}</nav>
-          <div class="quick"><div class="quick-title">Quick Add</div>
+          ${isOwnerUser()?`<div class="quick"><div class="quick-title">Quick Add</div>
             <button class="primary" data-action="new-task">＋ New Task</button>
             <button class="purple" data-action="new-account">＋ New Account</button>
             <button data-action="invite-va">＋ New VA</button>
-          </div>
+          </div>`:''}
         </aside>
         <main class="main">
           <header class="topbar">
@@ -137,7 +139,7 @@
     const maxSource=Math.max(1,...Object.values(sources));
     const rows=filterTasks(state.tasks).slice(0,8);
     return `
-      <div class="page-head"><div><h1>Dashboard</h1><p class="muted">Overview of all Amazon accounts, tasks and team activity</p></div><div class="actions"><button class="btn primary" data-action="new-task">＋ Add Task</button></div></div>
+      <div class="page-head"><div><h1>Dashboard</h1><p class="muted">Overview of all Amazon accounts, tasks and team activity</p></div>${isOwnerUser()?'<div class="actions"><button class="btn primary" data-action="new-task">＋ Add Task</button></div>':''}</div>
       <div class="grid kpi-grid">
         ${kpi('Total Tasks',c.total,'blue')}${kpi('Completed',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Not Started',c.notStarted,'amber')}${kpi('Waiting on Client',c.waiting,'purple')}${kpi('Overdue',c.overdue,'red')}
       </div>
@@ -170,9 +172,9 @@
   function accountsPage(){
     const rows=state.accounts.filter(a=>matchesGlobal([a.account_name,a.client_name,a.marketplace,a.status])).map(a=>{
       const all=state.tasks.filter(t=>t.account_id===a.id); const open=all.filter(t=>t.status!=='Complete').length;
-      return `<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.client_name||'—')}</td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${all.length}</td><td>${open}</td><td><button class="btn small" data-edit-account="${a.id}">Edit</button> <button class="btn small" data-account-tasks="${a.id}">Tasks</button></td></tr>`;
+      return `<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.client_name||'—')}</td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${all.length}</td><td>${open}</td><td>${isOwnerUser()?`<button class="btn small" data-edit-account="${a.id}">Edit</button> `:''}<button class="btn small" data-account-tasks="${a.id}">Tasks</button></td></tr>`;
     }).join('');
-    return `<div class="page-head"><div><h1>Accounts</h1><p class="muted">Manage all Amazon client accounts</p></div><button class="btn primary" data-action="new-account">＋ New Account</button></div>
+    return `<div class="page-head"><div><h1>Accounts</h1><p class="muted">${isOwnerUser()?'Manage all Amazon client accounts':'View Amazon client accounts'}</p></div>${isOwnerUser()?'<button class="btn primary" data-action="new-account">＋ New Account</button>':''}</div>
       <div class="card table-card"><div class="table-toolbar"><h3>All Accounts</h3><div class="muted small">${state.accounts.length} accounts</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Account Name</th><th>Client</th><th>Marketplace</th><th>Status</th><th>Total Tasks</th><th>Open Tasks</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="empty">No accounts found</td></tr>'}</tbody></table></div></div>`;
   }
 
@@ -198,8 +200,12 @@
     return `<div class="card table-card"><div class="table-toolbar"><h3>${esc(title)}</h3>${showFilters?taskFilters():''}</div>${taskTable(tasks)}</div>`;
   }
   function taskTable(tasks){
-    const rows=tasks.map((t,i)=>{ const a=accountById(t.account_id); const m=memberById(t.assigned_to); return `<tr>
-      <td>${i+1}</td><td><span class="link" data-edit-task="${t.id}">${esc(t.title)}</span></td><td>${a?`<span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span>`:'—'}</td><td>${esc(a?.client_name||'—')}</td><td>${m?`<span class="avatar" style="display:inline-grid;width:26px;height:26px;font-size:10px;margin-right:6px">${initials(m.full_name)}</span>${esc(m.full_name)}`:'Unassigned'}</td><td>${esc(t.source||'—')}</td><td>${badge(t.priority)}</td><td class="${isOverdue(t)?'danger':''}">${fmtDate(t.due_date)}</td><td>${badge(displayStatus(t))}</td><td><button class="btn small" data-edit-task="${t.id}">Edit</button></td></tr>`; }).join('');
+    const rows=tasks.map((t,i)=>{
+      const a=accountById(t.account_id);
+      const m=memberById(t.assigned_to);
+      const action = isOwnerUser() ? 'Edit' : (t.assigned_to===state.profile?.id ? 'Update Status' : 'View');
+      return `<tr>
+      <td>${i+1}</td><td><span class="link" data-open-task="${t.id}">${esc(t.title)}</span></td><td>${a?`<span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span>`:'—'}</td><td>${esc(a?.client_name||'—')}</td><td>${m?`<span class="avatar" style="display:inline-grid;width:26px;height:26px;font-size:10px;margin-right:6px">${initials(m.full_name)}</span>${esc(m.full_name)}`:'Unassigned'}</td><td>${esc(t.source||'—')}</td><td>${badge(t.priority)}</td><td class="${isOverdue(t)?'danger':''}">${fmtDate(t.due_date)}</td><td>${badge(displayStatus(t))}</td><td><button class="btn small" data-open-task="${t.id}">${action}</button></td></tr>`; }).join('');
     return `<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Task</th><th>Account</th><th>Client</th><th>Assigned To</th><th>Source</th><th>Priority</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No tasks found</td></tr>'}</tbody></table></div>`;
   }
 
@@ -208,7 +214,7 @@
     if(my) base=base.filter(t=>t.assigned_to===state.profile?.id);
     const rows=filterTasks(base);
     const c=metricCounts(base);
-    return `<div class="page-head"><div><h1>${my?'My Tasks':'Tasks'}</h1><p class="muted">${my?'View tasks assigned to you':'Manage all tasks across accounts'}</p></div><button class="btn primary" data-action="new-task">＋ Add Task</button></div>
+    return `<div class="page-head"><div><h1>${my?'My Tasks':'Tasks'}</h1><p class="muted">${my?'View tasks assigned to you':(isOwnerUser()?'Manage all tasks across accounts':'View agency tasks')}</p></div>${isOwnerUser()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div>
       ${my?`<div class="grid kpi-grid" style="grid-template-columns:repeat(5,1fr)">${kpi('My Total Tasks',c.total,'blue')}${kpi('Completed',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Not Started',c.notStarted,'amber')}${kpi('Overdue',c.overdue,'red')}</div>`:''}
       <div class="card table-card"><div class="table-toolbar">${taskFilters()}<div class="muted small">${rows.length} tasks</div></div>${taskTable(rows)}</div>`;
   }
@@ -218,7 +224,7 @@
       const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>t.status!=='Complete').length, overdue=all.filter(isOverdue).length, completeToday=all.filter(t=>t.status==='Complete' && (t.completed_at||'').slice(0,10)===today()).length;
       return `<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role))}</td><td>${all.length}</td><td>${open}</td><td class="${overdue?'danger':''}">${overdue}</td><td>${completeToday}</td><td>${m.active?badge('Active'):badge('Paused')}</td>${state.profile?.role==='owner'?`<td><button class="btn small" data-edit-member="${m.id}">Edit</button></td>`:'<td>—</td>'}</tr>`;
     }).join('');
-    return `<div class="page-head"><div><h1>Team / VAs</h1><p class="muted">Manage your team members and workload</p></div><button class="btn primary" data-action="invite-va">＋ New VA</button></div>
+    return `<div class="page-head"><div><h1>Team / VAs</h1><p class="muted">${isOwnerUser()?'Manage your team members and workload':'View team workload'}</p></div>${isOwnerUser()?'<button class="btn primary" data-action="invite-va">＋ New VA</button>':''}</div>
       <div class="card table-card"><div class="table-toolbar"><h3>Team Workload</h3><div class="muted small">${state.team.length} members</div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Total Tasks</th><th>Open</th><th>Overdue</th><th>Completed Today</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No team members</td></tr>'}</tbody></table></div></div>`;
   }
 
@@ -230,7 +236,7 @@
       const ts=state.tasks.filter(t=>t.due_date===iso);
       cells.push(`<div class="day"><div class="day-num">${day}</div>${ts.slice(0,4).map(t=>`<div class="cal-task" data-edit-task="${t.id}">${esc(t.title)}</div>`).join('')}${ts.length>4?`<div class="small muted">+${ts.length-4} more</div>`:''}</div>`);
     }
-    return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">View task deadlines by date</p></div><button class="btn primary" data-action="new-task">＋ Add Task</button></div><div class="card panel"><h3>${now.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</h3><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
+    return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">View task deadlines by date</p></div>${isOwnerUser()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div><div class="card panel"><h3>${now.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</h3><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
   }
 
   function reportsPage(){
@@ -249,7 +255,7 @@
     return `<div class="page-head"><div><h1>Settings</h1><p class="muted">Agency, profile and access settings</p></div></div>
       <div class="grid settings-grid">
         <div class="card panel"><h3>Profile</h3><div class="field"><label>Name</label><input id="setName" value="${esc(state.profile?.full_name||'')}"></div><div class="field"><label>Email</label><input value="${esc(state.profile?.email||state.user?.email||'')}" disabled></div><div class="field"><label>Role</label><input value="${esc(cap(state.profile?.role||''))}" disabled></div><button class="btn primary" data-action="save-profile">Save Profile</button></div>
-        <div class="card panel"><h3>Agency</h3><div class="field"><label>Agency Name</label><input id="agencyName" value="${esc(state.agency?.name||'')}"></div><div class="field"><label>Invite Code for VAs</label><div class="code-box">${esc(state.agency?.invite_code||'Not available')}</div></div><p class="small muted">Share the live dashboard URL plus this invite code. Each VA should use their own login.</p>${state.profile?.role==='owner'?'<button class="btn primary" data-action="save-agency">Save Agency</button>':''}</div>
+        <div class="card panel"><h3>Agency</h3><div class="field"><label>Agency Name</label><input id="agencyName" value="${esc(state.agency?.name||'')}" ${isOwnerUser()?'':'disabled'}></div>${isOwnerUser()?`<div class="field"><label>Invite Code for VAs</label><div class="code-box">${esc(state.agency?.invite_code||'Not available')}</div></div><p class="small muted">Share the live dashboard URL plus this invite code. Each VA should use their own login.</p><button class="btn primary" data-action="save-agency">Save Agency</button>`:'<p class="small muted">Agency settings and invite codes are available to the owner only.</p>'}</div>
         <div class="card panel"><h3>Data & Security</h3><p class="muted">${state.demo?'Demo data is currently saved in this browser only. Connect Firebase for real multi-user storage.':'Live data is stored in Firebase Firestore. Authentication is handled by Firebase Auth.'}</p><p class="small"><b>Do not store</b> Seller Central passwords, OTP codes, bank credentials, or private API secrets in task notes.</p></div>
         <div class="card panel"><h3>Session</h3>${state.demo?'<button class="btn red" data-action="reset-demo">Reset Demo Data</button>':'<button class="btn red" data-action="signout">Sign Out</button>'}</div>
       </div>`;
@@ -291,7 +297,8 @@
     document.querySelectorAll('[data-action="new-task"]').forEach(x=>x.onclick=()=>taskModal());
     document.querySelectorAll('[data-action="new-account"]').forEach(x=>x.onclick=()=>accountModal());
     document.querySelectorAll('[data-action="invite-va"]').forEach(x=>x.onclick=()=>inviteModal());
-    document.querySelectorAll('[data-edit-task]').forEach(x=>x.onclick=()=>taskModal(state.tasks.find(t=>t.id===x.dataset.editTask)));
+    document.querySelectorAll('[data-open-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.openTask)));
+    document.querySelectorAll('[data-edit-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.editTask)));
     document.querySelectorAll('[data-edit-account]').forEach(x=>x.onclick=()=>accountModal(state.accounts.find(a=>a.id===x.dataset.editAccount)));
     document.querySelectorAll('[data-open-account]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.openAccount; location.hash='#/tasks';});
     document.querySelectorAll('[data-account-tasks]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.accountTasks; location.hash='#/tasks';});
@@ -309,7 +316,95 @@
   }
   function closeModalFn(){ modalRoot.innerHTML=''; }
 
+  function openTask(t){
+    if(!t)return;
+    if(isOwnerUser()) return taskModal(t);
+    if(t.assigned_to===state.profile?.id) return vaTaskStatusModal(t);
+    return taskViewModal(t);
+  }
+
+  function fmtNoteTime(v){
+    if(!v) return '';
+    const d=new Date(v);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+  }
+
+  function taskNotesSection(t, canAdd=true){
+    return `
+      <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px"><div><b>Task Updates / Notes</b><div class="small muted">Append-only notes between the owner and the VA assigned to this task.</div></div></div>
+        <div id="taskNotesList" class="small muted" style="min-height:44px">Loading notes...</div>
+        ${canAdd?`<div class="field" style="margin-top:12px"><label>Add Note</label><textarea id="taskNoteInput" rows="3" maxlength="2000" placeholder="e.g. Need client access, issue found, work completed, approval required..."></textarea></div><button class="btn" id="addTaskNoteBtn" type="button">＋ Add Note</button>`:''}
+      </div>`;
+  }
+
+  async function loadTaskNotes(t){
+    const box=document.getElementById('taskNotesList');
+    if(!box||!t?.id)return;
+    if(state.demo){
+      const notes=t.task_notes||[];
+      box.innerHTML=notes.length?notes.slice().sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||''))).map(n=>`<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div><b>${esc(n.author_name||'User')}</b> <span class="muted">· ${esc(fmtNoteTime(n.created_at))}</span></div><div style="margin-top:4px;white-space:pre-wrap">${esc(n.note||'')}</div></div>`).join(''):'<div class="muted">No notes yet.</div>';
+      return;
+    }
+    const {data,error}=await sb.rpc('get_task_notes',{p_task_id:t.id});
+    if(error){box.innerHTML=`<div class="danger">${esc(error.message)}</div>`;return;}
+    const notes=data||[];
+    box.innerHTML=notes.length?notes.map(n=>`<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div><b>${esc(n.author_name||'User')}</b> <span class="muted">· ${esc(fmtNoteTime(n.created_at))}</span></div><div style="margin-top:4px;white-space:pre-wrap">${esc(n.note||'')}</div></div>`).join(''):'<div class="muted">No notes yet.</div>';
+  }
+
+  async function addTaskNote(t){
+    const input=document.getElementById('taskNoteInput');
+    const note=(input?.value||'').trim();
+    if(!note){toast('Write a note first.');return;}
+    if(note.length>2000){toast('Note is too long. Maximum 2000 characters.');return;}
+    if(state.demo){
+      t.task_notes=t.task_notes||[];
+      t.task_notes.push({id:'n'+Date.now(),note,author_id:state.profile?.id,author_name:state.profile?.full_name||'User',created_at:new Date().toISOString()});
+      persistDemo(); input.value=''; await loadTaskNotes(t); toast('Note added'); return;
+    }
+    const {error}=await sb.rpc('add_task_note',{p_task_id:t.id,p_note:note});
+    if(error){toast(error.message);return;}
+    input.value=''; await loadTaskNotes(t); toast('Note added');
+  }
+
+  function taskViewModal(t){
+    const a=accountById(t.account_id), m=memberById(t.assigned_to);
+    modal('Task Details',`
+      <div class="field"><label>Task</label><input value="${esc(t.title||'')}" disabled></div>
+      <div class="two"><div class="field"><label>Account</label><input value="${esc(a?.account_name||'—')}" disabled></div><div class="field"><label>Assigned To</label><input value="${esc(m?.full_name||'Unassigned')}" disabled></div></div>
+      <div class="two"><div class="field"><label>Status</label><input value="${esc(t.status||'')}" disabled></div><div class="field"><label>Priority</label><input value="${esc(t.priority||'')}" disabled></div></div>
+      <div class="two"><div class="field"><label>Due Date</label><input value="${esc(fmtDate(t.due_date))}" disabled></div><div class="field"><label>Source</label><input value="${esc(t.source||'—')}" disabled></div></div>
+      <div class="field"><label>Notes / Description</label><textarea rows="4" disabled>${esc(t.description||'')}</textarea></div>
+    `,'<button class="btn primary" id="closeTaskView">Close</button>');
+    closeTaskView.onclick=closeModalFn;
+  }
+
+  function vaTaskStatusModal(t){
+    const a=accountById(t.account_id);
+    modal('Update Task',`
+      <div class="field"><label>Task</label><input value="${esc(t.title||'')}" disabled></div>
+      <div class="two"><div class="field"><label>Account</label><input value="${esc(a?.account_name||'—')}" disabled></div><div class="field"><label>Due Date</label><input value="${esc(fmtDate(t.due_date))}" disabled></div></div>
+      <div class="field"><label>Owner Instructions / Description</label><textarea rows="4" disabled>${esc(t.description||'')}</textarea></div>
+      <div class="field"><label>Status</label><select id="vaTaskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Complete'].map(v=>`<option ${t.status===v?'selected':''}>${v}</option>`).join('')}</select></div>
+      <p class="small muted">You can update the status and add notes on tasks assigned to you. Other task fields remain owner-controlled.</p>
+      ${taskNotesSection(t,true)}
+    `,'<button class="btn" id="cancelVaTask">Cancel</button><button class="btn primary" id="saveVaTask">Save Status</button>');
+    cancelVaTask.onclick=closeModalFn;
+    saveVaTask.onclick=()=>saveVaTaskStatus(t);
+    addTaskNoteBtn.onclick=()=>addTaskNote(t);
+    loadTaskNotes(t);
+  }
+
+  async function saveVaTaskStatus(t){
+    if(!t || t.assigned_to!==state.profile?.id){ toast('This task is not assigned to your login.'); return; }
+    const status=vaTaskStatus.value;
+    const {error}=await sb.rpc('update_my_task_status',{p_task_id:t.id,p_status:status});
+    if(error){ toast(error.message); return; }
+    closeModalFn(); await loadData(); toast(status==='Complete'?'Task marked complete':'Task status updated');
+  }
+
   function taskModal(t=null){
+    if(!isOwnerUser()){ if(t) return openTask(t); toast('Only the owner can create tasks.'); return; }
     const edit=!!t; const x=t||{title:'',account_id:state.filters.account||'',assigned_to:'',received_by:state.profile?.id||'',source:'Internal',status:'Not Started',priority:'Medium',due_date:today(),description:'',recurring:false,recurrence:''};
     modal(edit?'Edit Task':'New Task',`<form id="taskForm">
       <div class="field"><label>Task</label><input id="taskTitle" value="${esc(x.title)}" required placeholder="e.g. PPC campaign optimization"></div>
@@ -319,8 +414,10 @@
       <div class="two"><div class="field"><label>Due Date</label><input id="taskDue" type="date" value="${esc(x.due_date||'')}"></div><div class="field"><label>Recurring</label><select id="taskRecurring"><option value="false" ${!x.recurring?'selected':''}>No</option><option value="true" ${x.recurring?'selected':''}>Yes</option></select></div></div>
       <div class="field"><label>Recurrence</label><select id="taskRecurrence"><option value="">None</option>${['Daily','Weekly','Monthly'].map(v=>`<option ${x.recurrence===v?'selected':''}>${v}</option>`).join('')}</select></div>
       <div class="field"><label>Notes / Description</label><textarea id="taskDescription" rows="4" placeholder="Details, client request, links...">${esc(x.description||'')}</textarea></div>
+      ${edit?taskNotesSection(t,true):''}
     </form>`,`${edit?'<button class="btn red" id="deleteTask">Delete</button>':''}<button class="btn" id="cancelTask">Cancel</button><button class="btn primary" id="saveTask">${edit?'Save Changes':'Create Task'}</button>`);
     cancelTask.onclick=closeModalFn; saveTask.onclick=()=>saveTaskData(t?.id); if(edit)deleteTask.onclick=()=>deleteTaskData(t.id);
+    if(edit){ addTaskNoteBtn.onclick=()=>addTaskNote(t); loadTaskNotes(t); }
   }
 
   async function saveTaskData(id){
@@ -333,33 +430,40 @@
       else state.tasks.push({id:'t'+Date.now(),...data,created_at:new Date().toISOString(),completed_at:data.status==='Complete'?new Date().toISOString():null});
       persistDemo();closeModalFn();render();toast('Task saved');return;
     }
-    data.agency_id=state.profile.agency_id; data.created_by=state.user.id;
+    if(!isOwnerUser()){toast('Only the owner can create or fully edit tasks.');return;}
+    data.agency_id=state.profile.agency_id;
+    const existing=id?state.tasks.find(t=>t.id===id):null;
+    data.completed_at=data.status==='Complete'?(existing?.completed_at||new Date().toISOString()):null;
+    if(!id) data.created_by=state.user.id;
     const res=id?await sb.from('tasks').update(data).eq('id',id):await sb.from('tasks').insert(data);
     if(res.error){toast(res.error.message);return;} closeModalFn();await loadData();toast('Task saved');
   }
-  async function deleteTaskData(id){ if(!confirm('Delete this task?'))return; if(state.demo){state.tasks=state.tasks.filter(t=>t.id!==id);persistDemo();closeModalFn();render();return;} const {error}=await sb.from('tasks').delete().eq('id',id); if(error)toast(error.message);else{closeModalFn();await loadData();} }
+  async function deleteTaskData(id){ if(!isOwnerUser()){toast('Only the owner can delete tasks.');return;} if(!confirm('Delete this task?'))return; if(state.demo){state.tasks=state.tasks.filter(t=>t.id!==id);persistDemo();closeModalFn();render();return;} const {error}=await sb.from('tasks').delete().eq('id',id); if(error)toast(error.message);else{closeModalFn();await loadData();} }
 
   function accountModal(a=null){
+    if(!isOwnerUser()){toast('Only the owner can create or edit accounts.');return;}
     const edit=!!a; const x=a||{account_name:'',client_name:'',marketplace:'Amazon US',status:'Active',notes:''};
     modal(edit?'Edit Account':'New Account',`<div class="field"><label>Account Name</label><input id="accName" value="${esc(x.account_name)}" placeholder="Amazon account / brand name"></div><div class="field"><label>Client Name</label><input id="accClient" value="${esc(x.client_name||'')}"></div><div class="two"><div class="field"><label>Marketplace</label><select id="accMarket">${['Amazon US','Amazon UK','Amazon CA','Amazon DE','Amazon AU','Amazon UAE','Amazon KSA','Other'].map(v=>`<option ${x.marketplace===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Status</label><select id="accStatus">${['Active','Onboarding','Paused','Closed'].map(v=>`<option ${x.status===v?'selected':''}>${v}</option>`).join('')}</select></div></div><div class="field"><label>Notes</label><textarea id="accNotes" rows="4">${esc(x.notes||'')}</textarea></div>`,`${edit?'<button class="btn red" id="deleteAccount">Delete</button>':''}<button class="btn" id="cancelAccount">Cancel</button><button class="btn primary" id="saveAccount">${edit?'Save Changes':'Create Account'}</button>`);
     cancelAccount.onclick=closeModalFn; saveAccount.onclick=()=>saveAccountData(a?.id); if(edit)deleteAccount.onclick=()=>deleteAccountData(a.id);
   }
-  async function saveAccountData(id){ const data={account_name:accName.value.trim(),client_name:accClient.value.trim(),marketplace:accMarket.value,status:accStatus.value,notes:accNotes.value.trim()}; if(!data.account_name){toast('Account name is required');return;} if(state.demo){if(id){const i=state.accounts.findIndex(a=>a.id===id);state.accounts[i]={...state.accounts[i],...data};}else state.accounts.push({id:'a'+Date.now(),...data});persistDemo();closeModalFn();render();toast('Account saved');return;} data.agency_id=state.profile.agency_id;data.created_by=state.user.id;const res=id?await sb.from('accounts').update(data).eq('id',id):await sb.from('accounts').insert(data);if(res.error)toast(res.error.message);else{closeModalFn();await loadData();toast('Account saved');} }
-  async function deleteAccountData(id){ if(state.tasks.some(t=>t.account_id===id)&&!confirm('This account has tasks. Delete account anyway? Tasks will remain without an account.'))return;if(!confirm('Delete this account?'))return;if(state.demo){state.accounts=state.accounts.filter(a=>a.id!==id);state.tasks=state.tasks.map(t=>t.account_id===id?{...t,account_id:null}:t);persistDemo();closeModalFn();render();return;}const {error}=await sb.from('accounts').delete().eq('id',id);if(error)toast(error.message);else{closeModalFn();await loadData();} }
+  async function saveAccountData(id){ const data={account_name:accName.value.trim(),client_name:accClient.value.trim(),marketplace:accMarket.value,status:accStatus.value,notes:accNotes.value.trim()}; if(!data.account_name){toast('Account name is required');return;} if(state.demo){if(id){const i=state.accounts.findIndex(a=>a.id===id);state.accounts[i]={...state.accounts[i],...data};}else state.accounts.push({id:'a'+Date.now(),...data});persistDemo();closeModalFn();render();toast('Account saved');return;} if(!isOwnerUser()){toast('Only the owner can create or edit accounts.');return;}data.agency_id=state.profile.agency_id;if(!id)data.created_by=state.user.id;const res=id?await sb.from('accounts').update(data).eq('id',id):await sb.from('accounts').insert(data);if(res.error)toast(res.error.message);else{closeModalFn();await loadData();toast('Account saved');} }
+  async function deleteAccountData(id){ if(!isOwnerUser()){toast('Only the owner can delete accounts.');return;} if(state.tasks.some(t=>t.account_id===id)&&!confirm('This account has tasks. Delete account anyway? Tasks will remain without an account.'))return;if(!confirm('Delete this account?'))return;if(state.demo){state.accounts=state.accounts.filter(a=>a.id!==id);state.tasks=state.tasks.map(t=>t.account_id===id?{...t,account_id:null}:t);persistDemo();closeModalFn();render();return;}const {error}=await sb.from('accounts').delete().eq('id',id);if(error)toast(error.message);else{closeModalFn();await loadData();} }
 
   function inviteModal(){
+    if(!isOwnerUser()){toast('Only the owner can invite VAs.');return;}
     modal('Add / Invite VA', state.demo?`<p>In Demo Mode, add a sample team member below.</p><div class="field"><label>Name</label><input id="newMemberName" placeholder="VA name"></div><div class="field"><label>Email</label><input id="newMemberEmail" type="email" placeholder="va@example.com"></div>`:`<p>Share your live dashboard URL with the VA. They should create their own account and then choose <b>Join Agency</b>.</p><div class="field"><label>Your Agency Invite Code</label><div class="code-box">${esc(state.agency?.invite_code||'')}</div></div><p class="small muted">This avoids sharing passwords. Each person gets their own login.</p>`, state.demo?'<button class="btn" id="cancelInvite">Cancel</button><button class="btn primary" id="saveInvite">Add VA</button>':'<button class="btn primary" id="cancelInvite">Done</button>');
     cancelInvite.onclick=closeModalFn;
     if(state.demo)saveInvite.onclick=()=>{const name=newMemberName.value.trim(),email=newMemberEmail.value.trim();if(!name)return;state.team.push({id:'m'+Date.now(),agency_id:'demo-agency',full_name:name,email,role:'va',active:true});persistDemo();closeModalFn();render();toast('VA added');};
   }
 
   function memberModal(m){
+    if(!isOwnerUser()){toast('Only the owner can manage team members.');return;}
     if(!m)return;modal('Edit Team Member',`<div class="field"><label>Name</label><input id="memberName" value="${esc(m.full_name||'')}"></div><div class="field"><label>Email</label><input value="${esc(m.email||'')}" disabled></div><div class="field"><label>Role</label><select id="memberRole">${['owner','manager','va'].map(v=>`<option value="${v}" ${m.role===v?'selected':''}>${cap(v)}</option>`).join('')}</select></div><div class="field"><label>Status</label><select id="memberActive"><option value="true" ${m.active!==false?'selected':''}>Active</option><option value="false" ${m.active===false?'selected':''}>Paused</option></select></div>`,`<button class="btn" id="cancelMember">Cancel</button><button class="btn primary" id="saveMember">Save</button>`);cancelMember.onclick=closeModalFn;saveMember.onclick=()=>saveMemberData(m.id);
   }
   async function saveMemberData(id){const data={full_name:memberName.value.trim(),role:memberRole.value,active:memberActive.value==='true'};if(state.demo){const i=state.team.findIndex(m=>m.id===id);state.team[i]={...state.team[i],...data};if(state.profile.id===id)state.profile=state.team[i];persistDemo();closeModalFn();render();return;}const {error}=await sb.rpc('owner_update_member',{p_member_id:id,p_full_name:data.full_name,p_role:data.role,p_active:data.active});if(error)toast(error.message);else{closeModalFn();await loadData();toast('Team member updated');}}
 
   async function saveProfile(){const name=document.getElementById('setName').value.trim();if(state.demo){state.profile.full_name=name;const i=state.team.findIndex(m=>m.id===state.profile.id);if(i>=0)state.team[i].full_name=name;persistDemo();render();toast('Profile saved');return;}const {error}=await sb.rpc('update_my_profile',{p_full_name:name});if(error)toast(error.message);else{await loadData();toast('Profile saved');}}
-  async function saveAgency(){const name=document.getElementById('agencyName').value.trim();if(!name)return;if(state.demo){state.agency.name=name;persistDemo();render();toast('Agency saved');return;}const {error}=await sb.from('agencies').update({name}).eq('id',state.agency.id);if(error)toast(error.message);else{await loadData();toast('Agency saved');}}
+  async function saveAgency(){if(!isOwnerUser()){toast('Only the owner can edit agency settings.');return;}const name=document.getElementById('agencyName').value.trim();if(!name)return;if(state.demo){state.agency.name=name;persistDemo();render();toast('Agency saved');return;}const {error}=await sb.from('agencies').update({name}).eq('id',state.agency.id);if(error)toast(error.message);else{await loadData();toast('Agency saved');}}
 
   async function loadData(){
     if(state.demo){seedDemo();render();return;}

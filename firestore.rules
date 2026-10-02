@@ -17,6 +17,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/agency_invites/$(code);
     }
 
+    function taskPath(taskId) {
+      return /databases/$(database)/documents/tasks/$(taskId);
+    }
+
     function myProfile() {
       return get(profilePath(request.auth.uid)).data;
     }
@@ -47,20 +51,20 @@ service cloud.firestore {
       allow list: if signedIn() && sameAgency(resource.data.agency_id);
 
       allow update: if signedIn() && (
-        // A user may edit their own profile without changing agency/access.
+        // Anyone may change only their own display name while keeping access fields fixed.
         (request.auth.uid == uid
           && request.resource.data.agency_id == resource.data.agency_id
           && request.resource.data.role == resource.data.role
           && request.resource.data.active == resource.data.active)
         ||
-        // First-time owner setup: the same batch creates an agency owned by this user.
+        // First-time owner setup.
         (request.auth.uid == uid
           && resource.data.agency_id == null
           && request.resource.data.role == 'owner'
           && request.resource.data.agency_id != null
           && getAfter(agencyPath(request.resource.data.agency_id)).data.owner_id == request.auth.uid)
         ||
-        // First-time VA join: the exact invite code must exist and point to the agency.
+        // First-time VA join using the exact invite code.
         (request.auth.uid == uid
           && resource.data.agency_id == null
           && request.resource.data.role == 'va'
@@ -68,7 +72,7 @@ service cloud.firestore {
           && get(invitePath(request.resource.data.join_code)).data.active == true
           && get(invitePath(request.resource.data.join_code)).data.agency_id == request.resource.data.agency_id)
         ||
-        // Agency owner may maintain members, but may not move them to another agency.
+        // Only the owner may manage members in the same agency.
         (isOwner()
           && resource.data.agency_id == myAgency()
           && request.resource.data.agency_id == resource.data.agency_id)
@@ -91,7 +95,7 @@ service cloud.firestore {
     }
 
     match /agency_invites/{code} {
-      // VAs can validate a code only when they know the exact document ID.
+      // A signed-in user may validate only a code they already know.
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn()
@@ -103,19 +107,69 @@ service cloud.firestore {
     }
 
     match /accounts/{id} {
+      // VAs may view accounts, but only the owner may create/edit/delete them.
       allow read: if sameAgency(resource.data.agency_id);
-      allow create: if signedIn()
+      allow create: if isOwner()
         && request.resource.data.agency_id == myAgency();
-      allow update, delete: if sameAgency(resource.data.agency_id)
+      allow update: if isOwner()
+        && sameAgency(resource.data.agency_id)
         && request.resource.data.agency_id == resource.data.agency_id;
+      allow delete: if isOwner()
+        && sameAgency(resource.data.agency_id);
+    }
+
+    match /task_notes/{id} {
+      // Notes are private to the agency owner and the VA currently assigned to the task.
+      allow read: if signedIn()
+        && get(taskPath(resource.data.task_id)).data.agency_id == myAgency()
+        && (
+          isOwner()
+          || get(taskPath(resource.data.task_id)).data.assigned_to == request.auth.uid
+        );
+
+      // Notes are append-only. Owner may comment on any agency task; a VA may comment only
+      // on a task assigned to their own login.
+      allow create: if signedIn()
+        && request.resource.data.agency_id == myAgency()
+        && request.resource.data.author_id == request.auth.uid
+        && request.resource.data.task_id is string
+        && request.resource.data.note is string
+        && request.resource.data.note.size() > 0
+        && request.resource.data.note.size() <= 2000
+        && get(taskPath(request.resource.data.task_id)).data.agency_id == myAgency()
+        && (
+          isOwner()
+          || get(taskPath(request.resource.data.task_id)).data.assigned_to == request.auth.uid
+        );
+
+      // Keep task notes as an audit trail.
+      allow update, delete: if false;
     }
 
     match /tasks/{id} {
+      // Everyone in the agency may view tasks.
       allow read: if sameAgency(resource.data.agency_id);
-      allow create: if signedIn()
+
+      // Only the owner creates tasks.
+      allow create: if isOwner()
         && request.resource.data.agency_id == myAgency();
-      allow update, delete: if sameAgency(resource.data.agency_id)
-        && request.resource.data.agency_id == resource.data.agency_id;
+
+      // Owner may edit any task. A VA may change only status/completed_at
+      // on a task that is assigned to their own Firebase UID.
+      allow update: if sameAgency(resource.data.agency_id)
+        && request.resource.data.agency_id == resource.data.agency_id
+        && (
+          isOwner()
+          ||
+          (resource.data.assigned_to == request.auth.uid
+            && request.resource.data.assigned_to == resource.data.assigned_to
+            && request.resource.data.status in ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Complete']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at']))
+        );
+
+      // Destructive task actions are owner-only.
+      allow delete: if isOwner()
+        && sameAgency(resource.data.agency_id);
     }
   }
 }

@@ -1,45 +1,52 @@
-# Amazon Agency Task Manager - Firebase Edition
+# Amazon Agency Task Manager - Final Firebase Build
 
-A GitHub-Pages-friendly dashboard for Amazon agencies. It includes Dashboard, Accounts, Tasks, My Tasks, Team/VAs, Calendar, Reports, Settings, task assignment, task source, priority, due dates, status, recurring tasks, owner/VA accounts, and agency invite codes.
+This is the consolidated Firebase version of the dashboard.
 
-## Architecture
+## Included features
+- Owner and VA email/password login with Firebase Authentication
+- Agency invite-code flow
+- Accounts, tasks, My Tasks, Team/VAs, Calendar, Reports and Settings
+- Owner-only account/task creation, editing and deletion
+- VA can view agency work but cannot delete accounts/tasks
+- VA can update status only on tasks assigned to their own login
+- VA can add append-only notes to their assigned tasks
+- Owner can view and add notes on agency tasks
+- Firestore security rules enforce permissions server-side
 
-- **GitHub** stores the website code.
-- **GitHub Pages** hosts the live dashboard.
-- **Firebase Authentication** provides separate owner/VA logins.
-- **Cloud Firestore** stores agencies, accounts, tasks and team profiles.
+## Files to upload to GitHub repository root
+- `index.html`
+- `styles.css`
+- `app.js`
+- `firebase-adapter.js`
+- `config.js`
+- `config.example.js`
+- `firestore.rules`
+- `README.md`
 
-The Firebase web configuration in `config.js` is client-side configuration. Never add service-account JSON, private keys, passwords, or other server credentials to GitHub.
+## Deploy/update steps
+1. Upload all files above to the existing GitHub repository root and replace same-name files.
+2. Commit the changes.
+3. Wait for GitHub Pages to deploy, then hard-refresh the live site (`Ctrl+F5`).
+4. In Firebase Console open **Firestore Database -> Rules**.
+5. Replace the current rules with the complete contents of `firestore.rules` and click **Publish**.
+6. Test with the Owner account and a VA account in a separate/incognito browser.
 
-## Files
+## Expected permissions
+### Owner
+- Full account/task/team control
+- Create/edit/delete accounts and tasks
+- Assign tasks to VAs
+- Update any task status
+- Add/view task notes
 
-- `index.html` - app entry point and Firebase SDK loading
-- `styles.css` - dashboard styles
-- `app.js` - dashboard UI and task/account flows
-- `firebase-adapter.js` - Firebase Auth/Firestore data layer
-- `config.js` - Firebase web app configuration
-- `firestore.rules` - production security rules to deploy after initial testing
+### VA
+- View agency accounts/tasks
+- Update status only for tasks assigned to their own login
+- Add/view notes only on tasks assigned to them
+- Cannot delete accounts/tasks
+- Cannot change task assignment, priority, due date, account or core task details
 
-## Initial testing
+## Security note
+The Firebase web config in `config.js` is client configuration and is expected to be visible in a browser. Actual access control is enforced through Firebase Authentication and the `firestore.rules` security rules.
 
-If Firestore was created in **Test mode**, upload these files to GitHub and verify:
-
-1. The live site shows a Sign In / Create Account screen instead of Demo Mode.
-2. Create the owner account.
-3. Create the agency.
-4. Add an Amazon account and task.
-5. Refresh the page and confirm the data persists.
-
-After that, deploy the supplied `firestore.rules` in Firebase Console > Firestore > Rules before relying on the app for real client data.
-
-## Owner / VA flow
-
-1. Owner creates an account and chooses **Create Agency**.
-2. Firebase creates an agency and an invite code.
-3. Owner shares the live dashboard URL and invite code with a VA.
-4. VA creates their own login and chooses **Join Agency**.
-5. Owner can assign tasks to the VA; the VA sees them under **My Tasks**.
-
-## Security notes
-
-Do not put Seller Central passwords, OTPs, banking credentials, service-account keys, or private API secrets in task notes. Firebase web config values are not server secrets; access control is enforced through Firebase Authentication and Firestore Security Rules.
+Do not put Seller Central passwords, OTPs, banking details, service-account credentials or other secrets into task notes.

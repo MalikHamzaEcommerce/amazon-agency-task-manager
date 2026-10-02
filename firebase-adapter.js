@@ -195,6 +195,65 @@
         return { data: true, error: null };
       }
 
+      if (name === 'update_my_task_status') {
+        if (profile.role !== 'va' && profile.role !== 'owner') throw new Error('Your account cannot update task status.');
+        const taskId = String(args.p_task_id || '').trim();
+        const status = String(args.p_status || '').trim();
+        const allowed = ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Complete'];
+        if (!taskId) throw new Error('Task ID is missing.');
+        if (!allowed.includes(status)) throw new Error('Invalid task status.');
+        const taskRef = db.collection('tasks').doc(taskId);
+        const taskSnap = await taskRef.get();
+        if (!taskSnap.exists) throw new Error('Task not found.');
+        const task = taskSnap.data();
+        if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
+        if (profile.role !== 'owner' && task.assigned_to !== user.uid) throw new Error('This task is not assigned to your login.');
+        const patch = {
+          status,
+          completed_at: status === 'Complete' ? (task.completed_at || nowIso()) : null
+        };
+        await taskRef.update(patch);
+        return { data: true, error: null };
+      }
+
+      if (name === 'get_task_notes') {
+        const taskId = String(args.p_task_id || '').trim();
+        if (!taskId) throw new Error('Task ID is missing.');
+        const taskSnap = await db.collection('tasks').doc(taskId).get();
+        if (!taskSnap.exists) throw new Error('Task not found.');
+        const task = taskSnap.data();
+        if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
+        if (profile.role !== 'owner' && task.assigned_to !== user.uid) throw new Error('Only the owner and the assigned VA can view these notes.');
+        const snap = await db.collection('task_notes')
+          .where('task_id', '==', taskId)
+          .get();
+        const rows = snap.docs.map(docData).sort((a,b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+        return { data: rows, error: null };
+      }
+
+      if (name === 'add_task_note') {
+        const taskId = String(args.p_task_id || '').trim();
+        const note = String(args.p_note || '').trim();
+        if (!taskId) throw new Error('Task ID is missing.');
+        if (!note) throw new Error('Write a note first.');
+        if (note.length > 2000) throw new Error('Note is too long. Maximum 2000 characters.');
+        const taskSnap = await db.collection('tasks').doc(taskId).get();
+        if (!taskSnap.exists) throw new Error('Task not found.');
+        const task = taskSnap.data();
+        if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
+        if (profile.role !== 'owner' && task.assigned_to !== user.uid) throw new Error('You can add notes only to tasks assigned to you.');
+        const payload = {
+          agency_id: profile.agency_id,
+          task_id: taskId,
+          author_id: user.uid,
+          author_name: profile.full_name || user.email || 'User',
+          note,
+          created_at: nowIso()
+        };
+        const ref = await db.collection('task_notes').add(payload);
+        return { data: { id: ref.id, ...payload }, error: null };
+      }
+
       throw new Error(`Unknown operation: ${name}`);
     } catch (e) { return wrapError(e); }
   }
