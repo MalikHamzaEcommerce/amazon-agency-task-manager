@@ -1,7 +1,7 @@
 (() => {
   const cfg = window.APP_CONFIG || {};
-  const hasSupabase = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && window.supabase);
-  const sb = hasSupabase ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
+  const hasFirebase = !!(cfg.FIREBASE_CONFIG && window.FIREBASE_BACKEND_READY && window.supabase);
+  const sb = hasFirebase ? window.supabase.createClient() : null;
   const app = document.getElementById('app');
   const modalRoot = document.getElementById('modal-root');
 
@@ -10,7 +10,7 @@
   };
 
   const state = {
-    demo: !hasSupabase,
+    demo: !hasFirebase,
     user: null,
     profile: null,
     agency: null,
@@ -94,7 +94,7 @@
   function shell(content){
     const profile = state.profile || {full_name:'User',role:'va'};
     return `
-      ${state.demo?'<div class="demo-banner">Demo Mode: sample data is stored only in this browser. Connect Supabase to make it multi-user and persistent.</div>':''}
+      ${state.demo?'<div class="demo-banner">Demo Mode: sample data is stored only in this browser. Connect Firebase to make it multi-user and persistent.</div>':''}
       <div class="app-shell">
         <aside class="sidebar">
           <div class="brand"><div class="brand-mark">a<span>⌣</span></div><div><div class="brand-title">Amazon</div><div class="brand-sub">Account Task Manager</div></div></div>
@@ -250,7 +250,7 @@
       <div class="grid settings-grid">
         <div class="card panel"><h3>Profile</h3><div class="field"><label>Name</label><input id="setName" value="${esc(state.profile?.full_name||'')}"></div><div class="field"><label>Email</label><input value="${esc(state.profile?.email||state.user?.email||'')}" disabled></div><div class="field"><label>Role</label><input value="${esc(cap(state.profile?.role||''))}" disabled></div><button class="btn primary" data-action="save-profile">Save Profile</button></div>
         <div class="card panel"><h3>Agency</h3><div class="field"><label>Agency Name</label><input id="agencyName" value="${esc(state.agency?.name||'')}"></div><div class="field"><label>Invite Code for VAs</label><div class="code-box">${esc(state.agency?.invite_code||'Not available')}</div></div><p class="small muted">Share the live dashboard URL plus this invite code. Each VA should use their own login.</p>${state.profile?.role==='owner'?'<button class="btn primary" data-action="save-agency">Save Agency</button>':''}</div>
-        <div class="card panel"><h3>Data & Security</h3><p class="muted">${state.demo?'Demo data is currently saved in this browser only. Connect Supabase for real multi-user storage.':'Live data is stored in Supabase Postgres and protected by Row Level Security.'}</p><p class="small"><b>Do not store</b> Seller Central passwords, OTP codes, bank credentials, or private API secrets in task notes.</p></div>
+        <div class="card panel"><h3>Data & Security</h3><p class="muted">${state.demo?'Demo data is currently saved in this browser only. Connect Firebase for real multi-user storage.':'Live data is stored in Firebase Firestore. Authentication is handled by Firebase Auth.'}</p><p class="small"><b>Do not store</b> Seller Central passwords, OTP codes, bank credentials, or private API secrets in task notes.</p></div>
         <div class="card panel"><h3>Session</h3>${state.demo?'<button class="btn red" data-action="reset-demo">Reset Demo Data</button>':'<button class="btn red" data-action="signout">Sign Out</button>'}</div>
       </div>`;
   }

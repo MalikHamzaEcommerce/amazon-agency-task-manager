@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath(uid) {
+      return /databases/$(database)/documents/profiles/$(uid);
+    }
+
+    function agencyPath(agencyId) {
+      return /databases/$(database)/documents/agencies/$(agencyId);
+    }
+
+    function invitePath(code) {
+      return /databases/$(database)/documents/agency_invites/$(code);
+    }
+
+    function myProfile() {
+      return get(profilePath(request.auth.uid)).data;
+    }
+
+    function myAgency() {
+      return myProfile().agency_id;
+    }
+
+    function isOwner() {
+      return signedIn() && myProfile().role == 'owner';
+    }
+
+    function sameAgency(agencyId) {
+      return signedIn() && agencyId != null && agencyId == myAgency();
+    }
+
+    match /profiles/{uid} {
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.agency_id == null
+        && request.resource.data.role == 'va';
+
+      allow get: if signedIn() && (
+        request.auth.uid == uid ||
+        sameAgency(resource.data.agency_id)
+      );
+
+      allow list: if signedIn() && sameAgency(resource.data.agency_id);
+
+      allow update: if signedIn() && (
+        // A user may edit their own profile without changing agency/access.
+        (request.auth.uid == uid
+          && request.resource.data.agency_id == resource.data.agency_id
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.active == resource.data.active)
+        ||
+        // First-time owner setup: the same batch creates an agency owned by this user.
+        (request.auth.uid == uid
+          && resource.data.agency_id == null
+          && request.resource.data.role == 'owner'
+          && request.resource.data.agency_id != null
+          && getAfter(agencyPath(request.resource.data.agency_id)).data.owner_id == request.auth.uid)
+        ||
+        // First-time VA join: the exact invite code must exist and point to the agency.
+        (request.auth.uid == uid
+          && resource.data.agency_id == null
+          && request.resource.data.role == 'va'
+          && request.resource.data.join_code is string
+          && get(invitePath(request.resource.data.join_code)).data.active == true
+          && get(invitePath(request.resource.data.join_code)).data.agency_id == request.resource.data.agency_id)
+        ||
+        // Agency owner may maintain members, but may not move them to another agency.
+        (isOwner()
+          && resource.data.agency_id == myAgency()
+          && request.resource.data.agency_id == resource.data.agency_id)
+      );
+
+      allow delete: if false;
+    }
+
+    match /agencies/{agencyId} {
+      allow create: if signedIn()
+        && request.resource.data.owner_id == request.auth.uid;
+      allow read: if signedIn() && (
+        resource.data.owner_id == request.auth.uid ||
+        agencyId == myAgency()
+      );
+      allow update: if isOwner()
+        && agencyId == myAgency()
+        && request.resource.data.owner_id == resource.data.owner_id;
+      allow delete: if false;
+    }
+
+    match /agency_invites/{code} {
+      // VAs can validate a code only when they know the exact document ID.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && getAfter(agencyPath(request.resource.data.agency_id)).data.owner_id == request.auth.uid;
+      allow update: if isOwner()
+        && resource.data.agency_id == myAgency()
+        && request.resource.data.agency_id == resource.data.agency_id;
+      allow delete: if false;
+    }
+
+    match /accounts/{id} {
+      allow read: if sameAgency(resource.data.agency_id);
+      allow create: if signedIn()
+        && request.resource.data.agency_id == myAgency();
+      allow update, delete: if sameAgency(resource.data.agency_id)
+        && request.resource.data.agency_id == resource.data.agency_id;
+    }
+
+    match /tasks/{id} {
+      allow read: if sameAgency(resource.data.agency_id);
+      allow create: if signedIn()
+        && request.resource.data.agency_id == myAgency();
+      allow update, delete: if sameAgency(resource.data.agency_id)
+        && request.resource.data.agency_id == resource.data.agency_id;
+    }
+  }
+}
