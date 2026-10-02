@@ -1,19 +1,41 @@
-# Amazon Agency Task Manager - Final Firebase Build
+# Amazon Agency Task Manager - Manager Role Build
 
-This is the consolidated Firebase version of the dashboard.
+This build adds a **Manager** role while preserving the existing Owner and VA workflow.
 
-## Included features
-- Owner and VA email/password login with Firebase Authentication
-- Agency invite-code flow
-- Accounts, tasks, My Tasks, Team/VAs, Calendar, Reports and Settings
-- Owner-only account/task creation, editing and deletion
-- VA can view agency work but cannot delete accounts/tasks
-- VA can update status only on tasks assigned to their own login
-- VA can add append-only notes to their assigned tasks
-- Owner can view and add notes on agency tasks
-- Firestore security rules enforce permissions server-side
+## Roles
 
-## Files to upload to GitHub repository root
+### Owner
+- Full access to accounts, tasks, calendar, reports, notes, agency settings and team operations.
+- Can promote a VA to **Manager** or demote a Manager back to **VA**.
+- Can remove and restore both VAs and Managers.
+- The Owner account itself cannot be removed or demoted.
+
+### Manager
+- Full operational access to the dashboard.
+- Can create, edit and delete accounts.
+- Can create, edit, assign and delete tasks.
+- Can update any task status and view/add notes on any task.
+- Can view reports, calendar and all agency work.
+- Can see the invite code and invite new VAs.
+- Can edit, pause, remove and restore **VA** accounts.
+- Can edit the agency name.
+- Cannot change the Owner, grant/remove the Manager role, or remove/restore another Manager. Those governance controls stay Owner-only.
+
+### VA
+- Can view agency accounts/tasks.
+- Can update status only for tasks assigned to their own login.
+- Can add/view notes only on tasks assigned to them.
+- Cannot create/delete accounts or tasks and cannot manage the team.
+
+## How the Owner promotes a VA to Manager
+1. Open **Team / VAs**.
+2. Click **Edit** next to the VA.
+3. Change **Role** from `VA` to `Manager`.
+4. Click **Save**.
+5. The user can refresh the dashboard and their role will show as **Manager** with full operational access.
+
+## Files to upload to GitHub
+Upload/replace these files in the repository root:
 - `index.html`
 - `styles.css`
 - `app.js`
@@ -23,46 +45,7 @@ This is the consolidated Firebase version of the dashboard.
 - `firestore.rules`
 - `README.md`
 
-## Deploy/update steps
-1. Upload all files above to the existing GitHub repository root and replace same-name files.
-2. Commit the changes.
-3. Wait for GitHub Pages to deploy, then hard-refresh the live site (`Ctrl+F5`).
-4. In Firebase Console open **Firestore Database -> Rules**.
-5. Replace the current rules with the complete contents of `firestore.rules` and click **Publish**.
-6. Test with the Owner account and a VA account in a separate/incognito browser.
+## Required Firebase step
+After uploading to GitHub, open **Firebase Console -> Firestore Database -> Rules** and replace the current rules with the complete contents of the new `firestore.rules`, then click **Publish**.
 
-## Expected permissions
-### Owner
-- Full account/task/team control
-- Create/edit/delete accounts and tasks
-- Assign tasks to VAs
-- Update any task status
-- Add/view task notes
-
-### VA
-- View agency accounts/tasks
-- Update status only for tasks assigned to their own login
-- Add/view notes only on tasks assigned to them
-- Cannot delete accounts/tasks
-- Cannot change task assignment, priority, due date, account or core task details
-
-## Security note
-The Firebase web config in `config.js` is client configuration and is expected to be visible in a browser. Actual access control is enforced through Firebase Authentication and the `firestore.rules` security rules.
-
-Do not put Seller Central passwords, OTPs, banking details, service-account credentials or other secrets into task notes.
-
-## Status color highlighting
-Task rows and calendar items are color-coded automatically:
-- Complete: green
-- In Progress: blue
-- Waiting on Client: purple
-- Not Started: amber
-- Blocked / Overdue: red
-
-## Owner: remove a VA
-The owner can open **Team / VAs -> Edit -> Remove VA**. Removal is a secure soft-delete: the VA immediately loses agency access, disappears from the active team, and any open tasks assigned to that VA become unassigned. Completed-task attribution and task-note history remain available for audit/history. Firebase Authentication does not allow one browser user to delete another user's Auth account directly, so the login record remains in Firebase Auth but cannot access agency data.
-
-
-## Restore / Rehire a removed VA
-
-Owners can open **Team / VAs → Former / Removed VAs** and click **Restore Access**. The VA keeps the same Firebase Authentication account and can sign in with the exact same email/password. If the VA is already signed in on the "Agency access removed" screen, they can click **Check Access Again** after the owner restores them. Open tasks that were unassigned during removal stay unassigned until the owner assigns them again.
+The UI restrictions and Firestore security rules both enforce the Owner / Manager / VA hierarchy.

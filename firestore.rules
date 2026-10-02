@@ -40,6 +40,14 @@ service cloud.firestore {
       return isActiveMember() && myProfile().role == 'owner';
     }
 
+    function isManager() {
+      return isActiveMember() && myProfile().role == 'manager';
+    }
+
+    function isLeadership() {
+      return isOwner() || isManager();
+    }
+
     function sameAgency(agencyId) {
       return isActiveMember() && agencyId != null && agencyId == myAgency();
     }
@@ -109,9 +117,20 @@ service cloud.firestore {
               && request.resource.data.role in ['va', 'manager'])
           ))
         ||
+        // Managers may edit current VAs, but cannot grant Manager access or
+        // modify Owner/Manager accounts. Role changes remain Owner-only.
+        (isManager()
+          && uid != request.auth.uid
+          && resource.data.agency_id == myAgency()
+          && resource.data.role == 'va'
+          && (!('removed' in resource.data) || resource.data.removed != true)
+          && request.resource.data.agency_id == resource.data.agency_id
+          && request.resource.data.role == 'va'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['full_name', 'active']))
+        ||
         // Owner may remove a non-owner teammate. This is a secure soft-delete:
         // the profile remains for audit/history but loses all agency access.
-        (isOwner()
+        ((isOwner() || (isManager() && resource.data.role == 'va'))
           && uid != request.auth.uid
           && resource.data.agency_id == myAgency()
           && resource.data.role != 'owner'
@@ -122,9 +141,10 @@ service cloud.firestore {
           && request.resource.data.removed_at is string
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'removed', 'removed_at', 'removed_by']))
         ||
-        // Owner may restore a previously removed teammate. The Firebase Auth login
+        // Owner may restore any non-owner teammate; Managers may restore VAs only.
+        // The Firebase Auth login is kept, so the same email/password still works.
         // is kept, so the VA can use the exact same email/password after restore.
-        (isOwner()
+        ((isOwner() || (isManager() && resource.data.role == 'va'))
           && uid != request.auth.uid
           && resource.data.agency_id == myAgency()
           && resource.data.role != 'owner'
@@ -144,7 +164,7 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.owner_id == request.auth.uid;
       allow read: if sameAgency(agencyId);
-      allow update: if isOwner()
+      allow update: if isLeadership()
         && agencyId == myAgency()
         && request.resource.data.owner_id == resource.data.owner_id;
       allow delete: if false;
@@ -155,8 +175,11 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn()
-        && getAfter(agencyPath(request.resource.data.agency_id)).data.owner_id == request.auth.uid;
-      allow update: if isOwner()
+        && (
+          getAfter(agencyPath(request.resource.data.agency_id)).data.owner_id == request.auth.uid
+          || (isLeadership() && request.resource.data.agency_id == myAgency())
+        );
+      allow update: if isLeadership()
         && resource.data.agency_id == myAgency()
         && request.resource.data.agency_id == resource.data.agency_id;
       allow delete: if false;
@@ -164,12 +187,12 @@ service cloud.firestore {
 
     match /accounts/{id} {
       allow read: if sameAgency(resource.data.agency_id);
-      allow create: if isOwner()
+      allow create: if isLeadership()
         && request.resource.data.agency_id == myAgency();
-      allow update: if isOwner()
+      allow update: if isLeadership()
         && sameAgency(resource.data.agency_id)
         && request.resource.data.agency_id == resource.data.agency_id;
-      allow delete: if isOwner()
+      allow delete: if isLeadership()
         && sameAgency(resource.data.agency_id);
     }
 
@@ -177,7 +200,7 @@ service cloud.firestore {
       allow read: if signedIn()
         && sameAgency(get(taskPath(resource.data.task_id)).data.agency_id)
         && (
-          isOwner()
+          isLeadership()
           || get(taskPath(resource.data.task_id)).data.assigned_to == request.auth.uid
         );
 
@@ -190,7 +213,7 @@ service cloud.firestore {
         && request.resource.data.note.size() <= 2000
         && sameAgency(get(taskPath(request.resource.data.task_id)).data.agency_id)
         && (
-          isOwner()
+          isLeadership()
           || get(taskPath(request.resource.data.task_id)).data.assigned_to == request.auth.uid
         );
 
@@ -200,13 +223,13 @@ service cloud.firestore {
     match /tasks/{id} {
       allow read: if sameAgency(resource.data.agency_id);
 
-      allow create: if isOwner()
+      allow create: if isLeadership()
         && request.resource.data.agency_id == myAgency();
 
       allow update: if sameAgency(resource.data.agency_id)
         && request.resource.data.agency_id == resource.data.agency_id
         && (
-          isOwner()
+          isLeadership()
           ||
           (resource.data.assigned_to == request.auth.uid
             && request.resource.data.assigned_to == resource.data.assigned_to
@@ -214,7 +237,7 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at']))
         );
 
-      allow delete: if isOwner()
+      allow delete: if isLeadership()
         && sameAgency(resource.data.agency_id);
     }
   }

@@ -184,21 +184,28 @@
       }
 
       if (name === 'owner_update_member') {
-        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active agency owner can edit team members.');
+        if (!['owner','manager'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Only an active Owner or Manager can edit team members.');
         const targetRef = db.collection('profiles').doc(args.p_member_id);
         const target = await targetRef.get();
         if (!target.exists || target.data().agency_id !== profile.agency_id) throw new Error('Team member not found.');
         if (target.data().removed === true) throw new Error('This team member has already been removed.');
-        const isAgencyOwner = target.id === user.uid || target.data().role === 'owner';
-        const patch = isAgencyOwner
-          ? { full_name: args.p_full_name || target.data().full_name || '', role: 'owner', active: true }
-          : { full_name: args.p_full_name || '', role: args.p_role || 'va', active: !!args.p_active };
+        const targetData = target.data();
+        const isAgencyOwner = target.id === user.uid || targetData.role === 'owner';
+        let patch;
+        if (profile.role === 'owner') {
+          patch = isAgencyOwner
+            ? { full_name: args.p_full_name || targetData.full_name || '', role: 'owner', active: true }
+            : { full_name: args.p_full_name || '', role: ['manager','va'].includes(args.p_role) ? args.p_role : 'va', active: !!args.p_active };
+        } else {
+          if (isAgencyOwner || targetData.role !== 'va') throw new Error('Managers can manage VAs, but only the Owner can change Manager or Owner roles.');
+          patch = { full_name: args.p_full_name || '', role: 'va', active: !!args.p_active };
+        }
         await targetRef.update(patch);
         return { data: true, error: null };
       }
 
       if (name === 'owner_remove_member') {
-        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active agency owner can remove VAs.');
+        if (!['owner','manager'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Only an active Owner or Manager can remove team members.');
         const memberId = String(args.p_member_id || '').trim();
         if (!memberId) throw new Error('Team member ID is missing.');
         if (memberId === user.uid) throw new Error('The agency owner cannot remove their own login.');
@@ -207,6 +214,7 @@
         if (!targetSnap.exists || targetSnap.data().agency_id !== profile.agency_id) throw new Error('Team member not found.');
         const target = targetSnap.data();
         if (target.role === 'owner') throw new Error('The agency owner cannot be removed.');
+        if (profile.role === 'manager' && target.role !== 'va') throw new Error('Managers can remove VAs only. Only the Owner can remove a Manager.');
         if (target.removed === true) return { data: true, error: null };
 
         const taskSnap = await db.collection('tasks').where('agency_id', '==', profile.agency_id).get();
@@ -226,7 +234,7 @@
       }
 
       if (name === 'owner_restore_member') {
-        if (profile.role !== 'owner' || profile.active === false || profile.removed === true) throw new Error('Only the active agency owner can restore VAs.');
+        if (!['owner','manager'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Only an active Owner or Manager can restore team members.');
         const memberId = String(args.p_member_id || '').trim();
         if (!memberId) throw new Error('Team member ID is missing.');
         if (memberId === user.uid) throw new Error('The agency owner cannot restore their own login as a VA.');
@@ -235,6 +243,7 @@
         if (!targetSnap.exists || targetSnap.data().agency_id !== profile.agency_id) throw new Error('Former team member not found.');
         const target = targetSnap.data();
         if (target.role === 'owner') throw new Error('The agency owner account cannot be restored as a VA.');
+        if (profile.role === 'manager' && target.role !== 'va') throw new Error('Managers can restore VAs only. Only the Owner can restore a Manager.');
         if (target.removed !== true) return { data: true, error: null };
         await targetRef.update({
           active: true,
@@ -251,7 +260,7 @@
       }
 
       if (name === 'update_my_task_status') {
-        if (profile.role !== 'va' && profile.role !== 'owner') throw new Error('Your account cannot update task status.');
+        if (!['va','manager','owner'].includes(profile.role)) throw new Error('Your account cannot update task status.');
         const taskId = String(args.p_task_id || '').trim();
         const status = String(args.p_status || '').trim();
         const allowed = ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Complete'];
@@ -262,7 +271,7 @@
         if (!taskSnap.exists) throw new Error('Task not found.');
         const task = taskSnap.data();
         if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
-        if (profile.role !== 'owner' && task.assigned_to !== user.uid) throw new Error('This task is not assigned to your login.');
+        if (!['owner','manager'].includes(profile.role) && task.assigned_to !== user.uid) throw new Error('This task is not assigned to your login.');
         const patch = {
           status,
           completed_at: status === 'Complete' ? (task.completed_at || nowIso()) : null
@@ -278,7 +287,7 @@
         if (!taskSnap.exists) throw new Error('Task not found.');
         const task = taskSnap.data();
         if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
-        if (profile.role !== 'owner' && task.assigned_to !== user.uid) throw new Error('Only the owner and the assigned VA can view these notes.');
+        if (!['owner','manager'].includes(profile.role) && task.assigned_to !== user.uid) throw new Error('Only agency leadership and the assigned VA can view these notes.');
         const snap = await db.collection('task_notes')
           .where('task_id', '==', taskId)
           .get();
@@ -296,7 +305,7 @@
         if (!taskSnap.exists) throw new Error('Task not found.');
         const task = taskSnap.data();
         if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
-        if (profile.role !== 'owner' && task.assigned_to !== user.uid) throw new Error('You can add notes only to tasks assigned to you.');
+        if (!['owner','manager'].includes(profile.role) && task.assigned_to !== user.uid) throw new Error('You can add notes only to tasks assigned to you.');
         const payload = {
           agency_id: profile.agency_id,
           task_id: taskId,
