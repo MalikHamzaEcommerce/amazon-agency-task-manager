@@ -1,0 +1,5 @@
+window.APP_CONFIG = {
+  SUPABASE_URL: 'https://YOUR_PROJECT.supabase.co',
+  SUPABASE_ANON_KEY: 'YOUR_PUBLIC_ANON_KEY',
+  APP_NAME: 'Amazon Account Task Manager'
+};
