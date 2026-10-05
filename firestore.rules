@@ -249,8 +249,29 @@ service cloud.firestore {
     match /tasks/{id} {
       allow read: if sameAgency(resource.data.agency_id);
 
-      allow create: if isLeadership()
-        && request.resource.data.agency_id == myAgency();
+      allow create: if (isLeadership()
+        && request.resource.data.agency_id == myAgency())
+        || (
+          isActiveMember()
+          && request.resource.data.agency_id == myAgency()
+          && request.resource.data.generated_by_recurrence == true
+          && request.resource.data.recurrence_parent_id is string
+          && request.resource.data.series_id is string
+          && request.resource.data.recurrence_index is int
+          && request.resource.data.recurrence_index > 0
+          && request.resource.data.status == 'Not Started'
+          && request.resource.data.completed_at == null
+          && request.resource.data.recurring == true
+          && request.resource.data.created_by == request.auth.uid
+          && getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.agency_id == myAgency()
+          && getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.assigned_to == request.auth.uid
+          && getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.status == 'Completed'
+          && getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.recurring == true
+          && request.resource.data.account_id == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.account_id
+          && request.resource.data.title == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.title
+          && request.resource.data.assigned_to == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.assigned_to
+          && request.resource.data.recurrence == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.recurrence
+        );
 
       allow update: if sameAgency(resource.data.agency_id)
         && request.resource.data.agency_id == resource.data.agency_id
@@ -259,7 +280,7 @@ service cloud.firestore {
           ||
           (resource.data.assigned_to == request.auth.uid
             && request.resource.data.assigned_to == resource.data.assigned_to
-            && request.resource.data.status in ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Completed']
+            && request.resource.data.status in ['Not Started', 'In Progress', 'Awaiting', 'Waiting on Client', 'Blocked', 'Completed']
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at']))
         );
 

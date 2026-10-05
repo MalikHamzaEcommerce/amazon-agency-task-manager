@@ -1,8 +1,9 @@
-1. Upload/replace all files in the same GitHub repository and commit.
-2. Firebase -> Firestore Database -> Rules: replace with the included firestore.rules and Publish.
-3. Wait for GitHub Pages deploy, then hard refresh (Ctrl+F5).
-4. Test Account Login Access as Owner/Manager and confirm a VA does not see it.
-5. Test Former / Removed Team Members -> Delete Record as Owner.
-6. Task statuses now use Completed and Not Started.
-
-Important: Delete Record permanently removes the Firestore profile only. Firebase Authentication is separate. To free the same email for a brand-new Create Account signup, delete the Auth user manually in Firebase Console -> Authentication -> Users.
+1. Upload/replace every file from this ZIP in the same GitHub repository and commit.
+2. Firebase -> Firestore Database -> Rules: replace the current rules with the included firestore.rules and click Publish.
+3. Confirm Firebase Authentication -> Sign-in method -> Email/Password is enabled.
+4. Wait for GitHub Pages to deploy, then hard refresh the site (Ctrl+F5).
+5. Test Forgot Password with a real user email.
+6. Create a recurring Daily/Weekly/Monthly task, mark it Completed, and confirm the completed occurrence stays in history while one new Not Started occurrence appears on the next date.
+7. Test Tasks date filters and inline edits as Owner/Manager; test status-only inline editing as a VA.
+8. Open Calendar, move between months, click a date, and filter that date by user.
+9. On Dashboard, click a name under Tasks by VA and test Today/Yesterday/Tomorrow/Select Date plus Close.

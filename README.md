@@ -1,41 +1,38 @@
-# Amazon Agency Task Manager - Manager Role Build
+# Amazon Agency Task Manager - Workflow Upgrade
 
-This build adds a **Manager** role while preserving the existing Owner and VA workflow.
+This build keeps the existing Firebase Auth + Firestore architecture and adds the requested task workflow improvements.
+
+## New in this build
+
+- Login password **Show / Hide** control.
+- **Forgot Password?** sends a Firebase Authentication password-reset email.
+- Task status **Awaiting** replaces the old “Waiting on Client” wording; legacy records are normalized in the UI.
+- Recurring task completion keeps the completed occurrence in history and automatically creates the next **Not Started** occurrence for Daily / Weekly / Monthly recurrence.
+- Recurring occurrences use a series ID + deterministic next-occurrence document ID to prevent accidental duplicates.
+- Tasks page date filters: **All Dates, Today, Yesterday, Tomorrow, Select Date**.
+- Owner/Manager can edit **Assigned To, Source, Priority, Due Date, Status** directly from task tables.
+- Assigned VAs can change their own task **Status** directly from the table.
+- “Received By” is renamed to **Assigned By** in the UI; the existing Firestore field is kept for backward compatibility.
+- Calendar supports **Previous / Next month**, clickable dates, historical task viewing, and a per-date **user filter**.
+- Completed tasks from earlier due dates are removed from the Dashboard current-task list but remain available in Calendar/history.
+- Dashboard **Tasks by VA** names are clickable. The expanded panel has date filters and Assigned / Completed / Pending / Awaiting / Overdue counts plus that VA’s task list.
+- Dashboard summary is current-work focused; Reports remains the historical view.
 
 ## Roles
 
 ### Owner
-- Full access to accounts, tasks, calendar, reports, notes, agency settings and team operations.
-- Can promote a VA to **Manager** or demote a Manager back to **VA**.
-- Can remove and restore both VAs and Managers.
-- The Owner account itself cannot be removed or demoted.
+Full access, including Manager role governance.
 
 ### Manager
-- Full operational access to the dashboard.
-- Can create, edit and delete accounts.
-- Can create, edit, assign and delete tasks.
-- Can update any task status and view/add notes on any task.
-- Can view reports, calendar and all agency work.
-- Can see the invite code and invite new VAs.
-- Can edit, pause, remove and restore **VA** accounts.
-- Can edit the agency name.
-- Cannot change the Owner, grant/remove the Manager role, or remove/restore another Manager. Those governance controls stay Owner-only.
+Full operational account/task access; may manage VAs but cannot govern Owner/Manager roles.
 
 ### VA
-- Can view agency accounts/tasks.
-- Can update status only for tasks assigned to their own login.
-- Can add/view notes only on tasks assigned to them.
-- Cannot create/delete accounts or tasks and cannot manage the team.
-
-## How the Owner promotes a VA to Manager
-1. Open **Team / VAs**.
-2. Click **Edit** next to the VA.
-3. Change **Role** from `VA` to `Manager`.
-4. Click **Save**.
-5. The user can refresh the dashboard and their role will show as **Manager** with full operational access.
+May view agency work, update the status of tasks assigned to their own login, and add/view notes on their assigned tasks.
 
 ## Files to upload to GitHub
-Upload/replace these files in the repository root:
+
+Replace the repository-root copies of:
+
 - `index.html`
 - `styles.css`
 - `app.js`
@@ -44,25 +41,16 @@ Upload/replace these files in the repository root:
 - `config.example.js`
 - `firestore.rules`
 - `README.md`
+- `UPDATE-STEPS.txt`
 
 ## Required Firebase step
-After uploading to GitHub, open **Firebase Console -> Firestore Database -> Rules** and replace the current rules with the complete contents of the new `firestore.rules`, then click **Publish**.
 
-The UI restrictions and Firestore security rules both enforce the Owner / Manager / VA hierarchy.
+After GitHub upload, open **Firebase Console -> Firestore Database -> Rules**, replace the rules with this build’s complete `firestore.rules`, and click **Publish**. This is required so an assigned VA can atomically create the next recurring occurrence when they complete a recurring task.
 
+Firebase Authentication must have Email/Password enabled for login and password-reset email delivery.
 
-## Latest update: Client-first Accounts + smooth refresh
-- Accounts opens with a list of clients first.
-- Selecting a client drills into that client's accounts.
-- Back button and quick client switcher are included.
-- Firebase Auth hydration is awaited on refresh, preventing the login screen from flashing for signed-in users.
-- Existing route/hash is restored before the first app render.
+## Recurring-task behavior
 
+Example: a Weekly task due Oct 5 is marked Completed. The Oct 5 task stays Completed for history/reporting, while a new Oct 12 task is created as Not Started. Completing Oct 12 creates Oct 19, and so on.
 
-## Latest three updates
-
-1. **Account Login Access**: Owners and Managers see a `Login Access` button on each account. The credentials live in the separate `account_credentials` Firestore collection and Firestore rules deny VA access.
-2. **Former member record deletion**: the Owner can permanently delete a removed member's Firestore profile record. Firebase Authentication is separate; the person's Auth login is not deleted by this frontend-only app. If you need the same email to be available for a brand-new Firebase signup, delete that user manually in Firebase Console -> Authentication -> Users.
-3. **Task status wording**: `Completed` replaces `Complete`, and legacy `Complete` / `Not Start` values are normalized to `Completed` / `Not Started` in the UI.
-
-Security note: storing Amazon passwords directly in Firestore is more sensitive than ordinary task data. The feature is restricted to Owner/Manager by both UI and Firestore rules, but a dedicated password manager is safer for production credentials.
+Security note: Account Login Access credentials remain restricted to Owner/Manager by UI and Firestore rules. A dedicated password manager is safer for production marketplace credentials.

@@ -64,6 +64,103 @@
     throw new Error('Could not generate an invite code. Please try again.');
   }
 
+  function toISODateLocal(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function recurrenceNextDate(dateStr, recurrence) {
+    if (!dateStr || !['Daily','Weekly','Monthly'].includes(recurrence)) return null;
+    const parts = String(dateStr).split('-').map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+    const [y,m,d] = parts;
+    if (recurrence === 'Monthly') {
+      const next = new Date(y, m, 1, 12, 0, 0, 0);
+      const lastDay = new Date(next.getFullYear(), next.getMonth()+1, 0).getDate();
+      next.setDate(Math.min(d, lastDay));
+      return toISODateLocal(next);
+    }
+    const next = new Date(y, m-1, d, 12, 0, 0, 0);
+    next.setDate(next.getDate() + (recurrence === 'Weekly' ? 7 : 1));
+    return toISODateLocal(next);
+  }
+
+  function recurringChildRef(task, taskId) {
+    const seriesId = task.series_id || taskId;
+    const nextIndex = (Number(task.recurrence_index) || 0) + 1;
+    const safeSeries = String(seriesId).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,120);
+    return db.collection('tasks').doc(`rec_${safeSeries}_${nextIndex}`);
+  }
+
+  function recurringChildPayload(task, taskId, userId, nextDue) {
+    return {
+      agency_id: task.agency_id,
+      account_id: task.account_id || null,
+      title: task.title || '',
+      assigned_to: task.assigned_to || null,
+      received_by: task.received_by || null,
+      source: task.source || 'Internal',
+      status: 'Not Started',
+      priority: task.priority || 'Medium',
+      due_date: nextDue,
+      recurring: true,
+      recurrence: task.recurrence,
+      description: task.description || '',
+      completed_at: null,
+      created_at: nowIso(),
+      created_by: userId,
+      generated_by_recurrence: true,
+      recurrence_parent_id: taskId,
+      series_id: task.series_id || taskId,
+      recurrence_index: (Number(task.recurrence_index) || 0) + 1
+    };
+  }
+
+  async function ensureNextRecurringTask(taskId, profile, userId) {
+    const taskRef = db.collection('tasks').doc(taskId);
+    return db.runTransaction(async tx => {
+      const taskSnap = await tx.get(taskRef);
+      if (!taskSnap.exists) throw new Error('Task not found.');
+      const task = taskSnap.data();
+      if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
+      if (!['owner','manager'].includes(profile.role) && task.assigned_to !== userId) throw new Error('This task is not assigned to your login.');
+      if (task.status !== 'Completed' || task.recurring !== true) return null;
+      const nextDue = recurrenceNextDate(task.due_date, task.recurrence);
+      if (!nextDue) return null;
+      const childRef = recurringChildRef(task, taskId);
+      const childSnap = await tx.get(childRef);
+      if (!childSnap.exists) tx.set(childRef, recurringChildPayload(task, taskId, userId, nextDue));
+      return childRef.id;
+    });
+  }
+
+  async function updateTaskStatusWithRecurrence(taskId, status, profile, userId) {
+    const allowed = ['Not Started', 'In Progress', 'Awaiting', 'Waiting on Client', 'Blocked', 'Completed'];
+    if (!allowed.includes(status)) throw new Error('Invalid task status.');
+    const normalizedStatus = status === 'Waiting on Client' ? 'Awaiting' : status;
+    const taskRef = db.collection('tasks').doc(taskId);
+    return db.runTransaction(async tx => {
+      const taskSnap = await tx.get(taskRef);
+      if (!taskSnap.exists) throw new Error('Task not found.');
+      const task = taskSnap.data();
+      if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
+      if (!['owner','manager'].includes(profile.role) && task.assigned_to !== userId) throw new Error('This task is not assigned to your login.');
+      let childRef = null, childSnap = null, nextDue = null;
+      if (normalizedStatus === 'Completed' && task.recurring === true) {
+        nextDue = recurrenceNextDate(task.due_date, task.recurrence);
+        if (nextDue) {
+          childRef = recurringChildRef(task, taskId);
+          childSnap = await tx.get(childRef);
+        }
+      }
+      tx.update(taskRef, {
+        status: normalizedStatus,
+        completed_at: normalizedStatus === 'Completed' ? (task.completed_at || nowIso()) : null
+      });
+      if (childRef && !childSnap.exists) tx.set(childRef, recurringChildPayload(task, taskId, userId, nextDue));
+      return childRef?.id || null;
+    });
+  }
+
   class QueryBuilder {
     constructor(table) {
       this.table = table;
@@ -323,24 +420,20 @@
       }
 
       if (name === 'update_my_task_status') {
-        if (!['va','manager','owner'].includes(profile.role)) throw new Error('Your account cannot update task status.');
+        if (!['va','manager','owner'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Your account cannot update task status.');
         const taskId = String(args.p_task_id || '').trim();
         const status = String(args.p_status || '').trim();
-        const allowed = ['Not Started', 'In Progress', 'Waiting on Client', 'Blocked', 'Completed'];
         if (!taskId) throw new Error('Task ID is missing.');
-        if (!allowed.includes(status)) throw new Error('Invalid task status.');
-        const taskRef = db.collection('tasks').doc(taskId);
-        const taskSnap = await taskRef.get();
-        if (!taskSnap.exists) throw new Error('Task not found.');
-        const task = taskSnap.data();
-        if (!profile.agency_id || task.agency_id !== profile.agency_id) throw new Error('This task is outside your agency.');
-        if (!['owner','manager'].includes(profile.role) && task.assigned_to !== user.uid) throw new Error('This task is not assigned to your login.');
-        const patch = {
-          status,
-          completed_at: status === 'Completed' ? (task.completed_at || nowIso()) : null
-        };
-        await taskRef.update(patch);
-        return { data: true, error: null };
+        const nextId = await updateTaskStatusWithRecurrence(taskId, status, profile, user.uid);
+        return { data: { next_task_id: nextId }, error: null };
+      }
+
+      if (name === 'ensure_next_recurrence') {
+        if (!['va','manager','owner'].includes(profile.role) || profile.active === false || profile.removed === true) throw new Error('Your account cannot create recurring tasks.');
+        const taskId = String(args.p_task_id || '').trim();
+        if (!taskId) throw new Error('Task ID is missing.');
+        const nextId = await ensureNextRecurringTask(taskId, profile, user.uid);
+        return { data: { next_task_id: nextId }, error: null };
       }
 
       if (name === 'get_task_notes') {
@@ -402,6 +495,10 @@
       },
       async signInWithPassword({ email, password }) {
         try { await auth.signInWithEmailAndPassword(email, password); return { data: {}, error: null }; }
+        catch (e) { return wrapError(e); }
+      },
+      async resetPasswordForEmail(email) {
+        try { await auth.sendPasswordResetEmail(String(email || '').trim()); return { data: {}, error: null }; }
         catch (e) { return wrapError(e); }
       },
       async signUp({ email, password, options = {} }) {

@@ -8,6 +8,9 @@
   const ICONS = {
     dashboard:'▦', accounts:'▣', tasks:'☑', my:'◉', team:'♙', calendar:'▤', reports:'◔', settings:'⚙'
   };
+  const TASK_STATUSES = ['Not Started','In Progress','Awaiting','Blocked','Completed'];
+  const TASK_PRIORITIES = ['High','Medium','Low'];
+  const TASK_SOURCES = ['Email','Slack','WhatsApp','Upwork','Fiverr','Client Portal','Call','Internal','Other'];
 
   const state = {
     demo: !hasFirebase,
@@ -19,7 +22,11 @@
     team: [],
     route: 'dashboard',
     search: '',
-    filters: { account:'', assignee:'', status:'', priority:'', source:'' }
+    filters: { account:'', assignee:'', status:'', priority:'', source:'', dateMode:'', date:'' },
+    dashboardMemberId: '',
+    dashboardMemberDateMode: 'today',
+    dashboardMemberDate: '',
+    calendarMonth: ''
   };
 
   const DEMO = {
@@ -43,11 +50,11 @@
 
   function demoTasks(){
     const d = new Date();
-    const iso = (offset=0) => { const x=new Date(d); x.setDate(x.getDate()+offset); return x.toISOString().slice(0,10); };
+    const iso = (offset=0) => { const x=new Date(d); x.setHours(12,0,0,0); x.setDate(x.getDate()+offset); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`; };
     return [
       {id:'t1',account_id:'a1',title:'PPC campaign optimization',description:'Review spend and high ACOS terms',assigned_to:'va-ali',received_by:'demo-owner',source:'Email',status:'In Progress',priority:'High',due_date:iso(0),recurring:true,recurrence:'Weekly',created_at:new Date().toISOString()},
       {id:'t2',account_id:'a3',title:'Fix suppressed listings',description:'Resolve listing suppression',assigned_to:'va-sarah',received_by:'demo-owner',source:'WhatsApp',status:'Completed',priority:'Medium',due_date:iso(0),recurring:false,recurrence:'',created_at:new Date().toISOString(),completed_at:new Date().toISOString()},
-      {id:'t3',account_id:'a2',title:'Update keywords',description:'Update backend search terms',assigned_to:'va-ahmed',received_by:'demo-owner',source:'Slack',status:'Waiting on Client',priority:'High',due_date:iso(1),recurring:false,recurrence:'',created_at:new Date().toISOString()},
+      {id:'t3',account_id:'a2',title:'Update keywords',description:'Update backend search terms',assigned_to:'va-ahmed',received_by:'demo-owner',source:'Slack',status:'Awaiting',priority:'High',due_date:iso(1),recurring:false,recurrence:'',created_at:new Date().toISOString()},
       {id:'t4',account_id:'a4',title:'Review account health',description:'Check policy and account health alerts',assigned_to:'demo-owner',received_by:'demo-owner',source:'Client Portal',status:'In Progress',priority:'Medium',due_date:iso(-1),recurring:true,recurrence:'Daily',created_at:new Date().toISOString()},
       {id:'t5',account_id:'a5',title:'Create A+ content',description:'Prepare module brief',assigned_to:'va-ali',received_by:'demo-owner',source:'Email',status:'Not Started',priority:'Low',due_date:iso(2),recurring:false,recurrence:'',created_at:new Date().toISOString()},
       {id:'t6',account_id:'a1',title:'Inventory alert check',description:'Review low-stock SKUs',assigned_to:'va-sarah',received_by:'demo-owner',source:'Internal',status:'Not Started',priority:'High',due_date:iso(0),recurring:true,recurrence:'Daily',created_at:new Date().toISOString()},
@@ -76,8 +83,29 @@
 
   function esc(v=''){ return String(v ?? '').replace(/[&<>"']/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s])); }
   function slug(v=''){ return String(v).toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,''); }
-  function today(){ return new Date().toISOString().slice(0,10); }
+  function toISODateLocal(d=new Date()){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+  function today(){ return toISODateLocal(new Date()); }
+  function shiftedDate(days=0){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+days); return toISODateLocal(d); }
   function fmtDate(v){ if(!v) return '—'; const d=new Date(v+'T00:00:00'); return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+  function recurrenceNextDate(dateStr, recurrence){
+    if(!dateStr || !['Daily','Weekly','Monthly'].includes(recurrence)) return null;
+    const parts=String(dateStr).split('-').map(Number); if(parts.length!==3||parts.some(Number.isNaN)) return null;
+    const [y,m,d]=parts;
+    if(recurrence==='Monthly'){
+      const nextMonthStart=new Date(y,m,1,12,0,0,0);
+      const lastDay=new Date(nextMonthStart.getFullYear(),nextMonthStart.getMonth()+1,0).getDate();
+      nextMonthStart.setDate(Math.min(d,lastDay));
+      return toISODateLocal(nextMonthStart);
+    }
+    const x=new Date(y,m-1,d,12,0,0,0); x.setDate(x.getDate()+(recurrence==='Weekly'?7:1)); return toISODateLocal(x);
+  }
+  function dateFromMode(mode, custom=''){
+    if(mode==='today') return today();
+    if(mode==='yesterday') return shiftedDate(-1);
+    if(mode==='tomorrow') return shiftedDate(1);
+    if(mode==='custom') return custom||'';
+    return '';
+  }
   function accountById(id){ return state.accounts.find(a=>a.id===id); }
   function memberById(id){ return state.team.find(m=>m.id===id); }
   function visibleTeam(){ return state.team.filter(m=>m.removed!==true); }
@@ -87,10 +115,16 @@
     const s=String(v||'').trim();
     if(s==='Complete') return 'Completed';
     if(s==='Not Start') return 'Not Started';
+    if(s==='Waiting on Client' || s==='Awaiting') return 'Awaiting';
     return s || 'Not Started';
   }
   function isCompletedTask(t){ return normalizeTaskStatus(t?.status)==='Completed'; }
   function isOverdue(t){ return !isCompletedTask(t) && t.due_date && t.due_date < today(); }
+  function completedToday(t){
+    if(!isCompletedTask(t)) return false;
+    const completed=(t.completed_at||'').slice(0,10);
+    return completed ? completed===today() : t.due_date===today();
+  }
   function displayStatus(t){ return isOverdue(t) ? 'Overdue' : normalizeTaskStatus(t.status); }
   function taskStatusClass(t){ return `status-${slug(displayStatus(t))}`; }
   function initials(name=''){ return name.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase() || 'U'; }
@@ -114,6 +148,46 @@
     return isOwnerUser() || (isManagerUser() && m.role==='va');
   }
   function canUpdateTask(t){ return hasFullAccess() || (state.profile?.role === 'va' && t?.assigned_to === state.profile?.id); }
+  function dashboardCurrentScope(){ return state.tasks.filter(t=>!isCompletedTask(t) || completedToday(t)); }
+  function buildRecurringChild(t, id){
+    if(!t?.recurring || !t?.recurrence || !t?.due_date || !isCompletedTask(t)) return null;
+    const nextDue=recurrenceNextDate(t.due_date,t.recurrence); if(!nextDue) return null;
+    const seriesId=t.series_id||t.id;
+    return {
+      id,
+      agency_id:t.agency_id||state.profile?.agency_id||state.agency?.id||null,
+      account_id:t.account_id||null,
+      title:t.title||'',
+      assigned_to:t.assigned_to||null,
+      received_by:t.received_by||null,
+      source:t.source||'Internal',
+      status:'Not Started',
+      priority:t.priority||'Medium',
+      due_date:nextDue,
+      recurring:true,
+      recurrence:t.recurrence,
+      description:t.description||'',
+      completed_at:null,
+      created_at:new Date().toISOString(),
+      created_by:state.profile?.id||state.user?.id||null,
+      generated_by_recurrence:true,
+      recurrence_parent_id:t.id,
+      series_id:seriesId,
+      recurrence_index:(Number(t.recurrence_index)||0)+1
+    };
+  }
+  function ensureNextRecurringDemo(t){
+    if(!t?.id || !isCompletedTask(t) || !t.recurring) return null;
+    const nextDue=recurrenceNextDate(t.due_date,t.recurrence); if(!nextDue) return null;
+    const seriesId=t.series_id||t.id;
+    const nextIndex=(Number(t.recurrence_index)||0)+1;
+    const existing=state.tasks.find(x=>x.id!==t.id && x.series_id===seriesId && Number(x.recurrence_index)===nextIndex && x.generated_by_recurrence===true);
+    if(existing) return existing;
+    const safeSeries=String(seriesId).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,120);
+    const id=`rec_${safeSeries}_${nextIndex}`;
+    const child=buildRecurringChild(t,id); if(!child) return null;
+    state.tasks.push(child); return child;
+  }
 
   function navItems(){
     return [
@@ -152,42 +226,71 @@
     return {
       total:tasks.length,
       complete:tasks.filter(isCompletedTask).length,
-      progress:tasks.filter(t=>t.status==='In Progress').length,
-      notStarted:tasks.filter(t=>t.status==='Not Started').length,
-      waiting:tasks.filter(t=>t.status==='Waiting on Client').length,
+      progress:tasks.filter(t=>normalizeTaskStatus(t.status)==='In Progress').length,
+      notStarted:tasks.filter(t=>normalizeTaskStatus(t.status)==='Not Started').length,
+      awaiting:tasks.filter(t=>normalizeTaskStatus(t.status)==='Awaiting').length,
       overdue:tasks.filter(isOverdue).length
     };
   }
 
   function dashboardPage(){
-    const c=metricCounts();
+    const scope=dashboardCurrentScope();
+    const c=metricCounts(scope);
     const teamCounts=activeTeam().map(m=>({m,count:state.tasks.filter(t=>t.assigned_to===m.id && !isCompletedTask(t)).length})).sort((a,b)=>b.count-a.count);
-    const sources={}; state.tasks.forEach(t=>sources[t.source]=(sources[t.source]||0)+1);
+    const sources={}; scope.forEach(t=>sources[t.source]=(sources[t.source]||0)+1);
     const maxTeam=Math.max(1,...teamCounts.map(x=>x.count));
     const maxSource=Math.max(1,...Object.values(sources));
-    const rows=filterTasks(state.tasks).slice(0,8);
+    const currentRows=state.tasks.filter(t=>!isCompletedTask(t) || !t.due_date || t.due_date>=today());
+    const rows=filterTasks(currentRows).slice(0,8);
     return `
-      <div class="page-head"><div><h1>Dashboard</h1><p class="muted">Overview of all Amazon accounts, tasks and team activity</p></div>${hasFullAccess()?'<div class="actions"><button class="btn primary" data-action="new-task">＋ Add Task</button></div>':''}</div>
+      <div class="page-head"><div><h1>Dashboard</h1><p class="muted">Overview of current Amazon account work and team activity</p></div>${hasFullAccess()?'<div class="actions"><button class="btn primary" data-action="new-task">＋ Add Task</button></div>':''}</div>
       <div class="grid kpi-grid">
-        ${kpi('Total Tasks',c.total,'blue')}${kpi('Completed',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Not Started',c.notStarted,'amber')}${kpi('Waiting on Client',c.waiting,'purple')}${kpi('Overdue',c.overdue,'red')}
+        ${kpi('Current Tasks',c.total,'blue')}${kpi('Completed Today',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Not Started',c.notStarted,'amber')}${kpi('Awaiting',c.awaiting,'purple')}${kpi('Overdue',c.overdue,'red')}
       </div>
       <div class="grid widgets">
-        <div class="card widget"><h3>Tasks by Status</h3>${statusBars()}</div>
-        <div class="card widget"><h3>Tasks by VA</h3>${teamCounts.map(x=>`<div class="va-row"><span>${esc(x.m.full_name)}</span><div class="bar purple"><i style="width:${Math.round(x.count/maxTeam*100)}%"></i></div><b>${x.count}</b></div>`).join('')||'<div class="empty">No team yet</div>'}</div>
+        <div class="card widget"><h3>Tasks by Status</h3>${statusBars(scope)}</div>
+        <div class="card widget"><h3>Tasks by VA</h3>${teamCounts.map(x=>`<div class="va-row"><button class="va-name-button" data-va-dashboard="${x.m.id}" title="View ${esc(x.m.full_name)} task details">${esc(x.m.full_name)}</button><div class="bar purple"><i style="width:${Math.round(x.count/maxTeam*100)}%"></i></div><b>${x.count}</b></div>`).join('')||'<div class="empty">No team yet</div>'}</div>
         <div class="card widget"><h3>Tasks by Source</h3>${Object.entries(sources).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`<div class="source-row"><span>${esc(s)}</span><div class="bar green"><i style="width:${Math.round(n/maxSource*100)}%"></i></div><b>${n}</b></div>`).join('')||'<div class="empty">No sources yet</div>'}</div>
       </div>
+      ${state.dashboardMemberId?vaDashboardPanel():''}
       ${taskTableCard("Today's / Current Tasks", rows, true)}
       <div class="grid split" style="margin-top:14px">
         <div class="card panel"><div class="page-head"><div><h3 style="margin:0">Accounts Overview</h3></div><button class="btn" onclick="location.hash='#/accounts'">View All</button></div>${accountsMini()}</div>
         <div class="card panel"><div class="page-head"><div><h3 style="margin:0">Upcoming Deadlines</h3></div></div>${upcomingMini()}</div>
       </div>`;
   }
-  function kpi(label,value,cls){ return `<div class="card kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`; }
-  function statusBars(){
-    const labels=['Completed','In Progress','Not Started','Waiting on Client','Blocked'];
-    const max=Math.max(1,...labels.map(s=>state.tasks.filter(t=>normalizeTaskStatus(t.status)===s).length));
-    return labels.map((s,i)=>{ const n=state.tasks.filter(t=>normalizeTaskStatus(t.status)===s).length; const cl=['green','','amber','purple','red'][i]; return `<div class="status-row"><span>${s}</span><div class="bar ${cl}"><i style="width:${Math.round(n/max*100)}%"></i></div><b>${n}</b></div>`; }).join('');
+
+  function vaDashboardPanel(){
+    const m=activeTeam().find(x=>x.id===state.dashboardMemberId);
+    if(!m){ state.dashboardMemberId=''; return ''; }
+    const mode=state.dashboardMemberDateMode||'today';
+    const date=dateFromMode(mode,state.dashboardMemberDate);
+    let tasks=state.tasks.filter(t=>t.assigned_to===m.id);
+    if(date) tasks=tasks.filter(t=>t.due_date===date);
+    tasks=tasks.slice().sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999') || String(a.title||'').localeCompare(String(b.title||'')));
+    const counts={
+      assigned:tasks.length,
+      completed:tasks.filter(isCompletedTask).length,
+      pending:tasks.filter(t=>!isCompletedTask(t)).length,
+      awaiting:tasks.filter(t=>normalizeTaskStatus(t.status)==='Awaiting').length,
+      overdue:tasks.filter(isOverdue).length
+    };
+    const label=date?fmtDate(date):'All Dates';
+    return `<div class="card va-detail-panel">
+      <div class="va-detail-head"><div><h3>${esc(m.full_name)} — ${esc(label)}</h3><div class="muted small">Assigned task detail and completion snapshot</div></div><button class="btn" data-va-dashboard-close>× Close</button></div>
+      <div class="va-detail-controls"><select id="vaDateMode"><option value="" ${mode===''?'selected':''}>All Dates</option><option value="today" ${mode==='today'?'selected':''}>Today</option><option value="yesterday" ${mode==='yesterday'?'selected':''}>Yesterday</option><option value="tomorrow" ${mode==='tomorrow'?'selected':''}>Tomorrow</option><option value="custom" ${mode==='custom'?'selected':''}>Select Date</option></select>${mode==='custom'?`<input id="vaCustomDate" type="date" value="${esc(state.dashboardMemberDate||'')}">`:''}</div>
+      <div class="va-stat-grid"><div class="va-stat"><span>Assigned</span><b>${counts.assigned}</b></div><div class="va-stat"><span>Completed</span><b>${counts.completed}</b></div><div class="va-stat"><span>Pending</span><b>${counts.pending}</b></div><div class="va-stat"><span>Awaiting</span><b>${counts.awaiting}</b></div><div class="va-stat"><span>Overdue</span><b>${counts.overdue}</b></div></div>
+      ${taskTable(tasks)}
+    </div>`;
   }
+
+  function kpi(label,value,cls){ return `<div class="card kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`; }
+  function statusBars(tasks=state.tasks){
+    const labels=['Completed','In Progress','Not Started','Awaiting','Blocked'];
+    const max=Math.max(1,...labels.map(s=>tasks.filter(t=>normalizeTaskStatus(t.status)===s).length));
+    return labels.map((s,i)=>{ const n=tasks.filter(t=>normalizeTaskStatus(t.status)===s).length; const cl=['green','','amber','purple','red'][i]; return `<div class="status-row"><span>${s}</span><div class="bar ${cl}"><i style="width:${Math.round(n/max*100)}%"></i></div><b>${n}</b></div>`; }).join('');
+  }
+
   function accountsMini(){
     const rows=state.accounts.slice(0,6).map(a=>`<tr><td><span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span></td><td>${esc(a.client_name||'—')}</td><td>${esc(a.marketplace||'—')}</td><td>${badge(a.status)}</td><td>${state.tasks.filter(t=>t.account_id===a.id).length}</td></tr>`).join('');
     return `<div class="table-wrap"><table class="data-table" style="min-width:650px"><thead><tr><th>Account</th><th>Client</th><th>Marketplace</th><th>Status</th><th>Tasks</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No accounts</td></tr>'}</tbody></table></div>`;
@@ -229,20 +332,31 @@
 
   function taskFilters(){
     const vals=(arr,key)=>[...new Set(arr.map(x=>x[key]).filter(Boolean))].sort();
+    const mode=state.filters.dateMode||'';
     return `<div class="filters">
       <select id="fAccount"><option value="">All Accounts</option>${state.accounts.map(a=>`<option value="${a.id}" ${state.filters.account===a.id?'selected':''}>${esc(a.account_name)}</option>`).join('')}</select>
       <select id="fAssignee"><option value="">All VAs</option>${visibleTeam().map(m=>`<option value="${m.id}" ${state.filters.assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select>
-      <select id="fStatus"><option value="">All Status</option>${['Not Started','In Progress','Waiting on Client','Blocked','Completed'].map(v=>`<option ${state.filters.status===v?'selected':''}>${v}</option>`).join('')}</select>
-      <select id="fPriority"><option value="">All Priority</option>${['High','Medium','Low'].map(v=>`<option ${state.filters.priority===v?'selected':''}>${v}</option>`).join('')}</select>
-      <select id="fSource"><option value="">All Sources</option>${vals(state.tasks,'source').map(v=>`<option ${state.filters.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>
+      <select id="fStatus"><option value="">All Status</option>${TASK_STATUSES.map(v=>`<option value="${v}" ${state.filters.status===v?'selected':''}>${v}</option>`).join('')}</select>
+      <select id="fPriority"><option value="">All Priority</option>${TASK_PRIORITIES.map(v=>`<option value="${v}" ${state.filters.priority===v?'selected':''}>${v}</option>`).join('')}</select>
+      <select id="fSource"><option value="">All Sources</option>${vals(state.tasks,'source').map(v=>`<option value="${esc(v)}" ${state.filters.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>
+      <select id="fDateMode"><option value="" ${mode===''?'selected':''}>All Dates</option><option value="today" ${mode==='today'?'selected':''}>Today</option><option value="yesterday" ${mode==='yesterday'?'selected':''}>Yesterday</option><option value="tomorrow" ${mode==='tomorrow'?'selected':''}>Tomorrow</option><option value="custom" ${mode==='custom'?'selected':''}>Select Date</option></select>
+      ${mode==='custom'?`<input id="fDateCustom" type="date" value="${esc(state.filters.date||'')}" aria-label="Select task date">`:''}
     </div>`;
   }
   function filterTasks(input){
+    const selectedDate=dateFromMode(state.filters.dateMode,state.filters.date);
     return input.filter(t=>{
       const a=accountById(t.account_id), m=memberById(t.assigned_to);
-      return (!state.filters.account||t.account_id===state.filters.account) && (!state.filters.assignee||t.assigned_to===state.filters.assignee) && (!state.filters.status||t.status===state.filters.status) && (!state.filters.priority||t.priority===state.filters.priority) && (!state.filters.source||t.source===state.filters.source) && matchesGlobal([t.title,t.description,t.source,t.status,t.priority,a?.account_name,a?.client_name,m?.full_name]);
-    }).sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
+      return (!state.filters.account||t.account_id===state.filters.account)
+        && (!state.filters.assignee||t.assigned_to===state.filters.assignee)
+        && (!state.filters.status||normalizeTaskStatus(t.status)===state.filters.status)
+        && (!state.filters.priority||t.priority===state.filters.priority)
+        && (!state.filters.source||t.source===state.filters.source)
+        && (!selectedDate||t.due_date===selectedDate)
+        && matchesGlobal([t.title,t.description,t.source,normalizeTaskStatus(t.status),t.priority,a?.account_name,a?.client_name,m?.full_name]);
+    }).sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999') || String(a.title||'').localeCompare(String(b.title||'')));
   }
+
   function matchesGlobal(fields){ if(!state.search) return true; const q=state.search.toLowerCase(); return fields.some(v=>String(v||'').toLowerCase().includes(q)); }
 
   function taskTableCard(title,tasks,showFilters=false){
@@ -252,9 +366,22 @@
     const rows=tasks.map((t,i)=>{
       const a=accountById(t.account_id);
       const m=memberById(t.assigned_to);
-      const action = hasFullAccess() ? 'Edit' : (t.assigned_to===state.profile?.id ? 'Update Status' : 'View');
+      const action = hasFullAccess() ? 'Edit' : (t.assigned_to===state.profile?.id ? 'Details' : 'View');
+      const currentStatus=normalizeTaskStatus(t.status);
+      const assigneeOptions=activeTeam().slice();
+      if(m && !assigneeOptions.some(x=>x.id===m.id)) assigneeOptions.push(m);
+      const sourceOptions=[...new Set([...TASK_SOURCES,t.source].filter(Boolean))];
+      const assignedCell=hasFullAccess()
+        ? `<div class="inline-assignee">${m?`<span class="avatar mini-avatar">${initials(m.full_name)}</span>`:''}<select class="inline-control" data-inline-task="${t.id}" data-inline-field="assigned_to"><option value="">Unassigned</option>${assigneeOptions.map(x=>`<option value="${x.id}" ${t.assigned_to===x.id?'selected':''}>${esc(x.full_name)}</option>`).join('')}</select></div>`
+        : (m?`<span class="avatar mini-avatar">${initials(m.full_name)}</span>${esc(m.full_name)}`:'Unassigned');
+      const sourceCell=hasFullAccess()?`<select class="inline-control" data-inline-task="${t.id}" data-inline-field="source">${sourceOptions.map(v=>`<option value="${esc(v)}" ${t.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>`:esc(t.source||'—');
+      const priorityCell=hasFullAccess()?`<select class="inline-control priority-inline" data-inline-task="${t.id}" data-inline-field="priority">${TASK_PRIORITIES.map(v=>`<option value="${v}" ${t.priority===v?'selected':''}>${v}</option>`).join('')}</select>`:badge(t.priority);
+      const dateCell=hasFullAccess()?`<input class="inline-control inline-date ${isOverdue(t)?'danger':''}" data-inline-task="${t.id}" data-inline-field="due_date" type="date" value="${esc(t.due_date||'')}">`:`<span class="${isOverdue(t)?'danger':''}">${fmtDate(t.due_date)}</span>`;
+      const canInlineStatus=hasFullAccess() || (state.profile?.role==='va' && t.assigned_to===state.profile?.id);
+      const statusCell=canInlineStatus?`<div class="inline-status-wrap"><select class="inline-control status-inline" data-inline-task="${t.id}" data-inline-field="status">${TASK_STATUSES.map(v=>`<option value="${v}" ${currentStatus===v?'selected':''}>${v}</option>`).join('')}</select>${isOverdue(t)?'<span class="small danger">Overdue</span>':''}</div>`:badge(displayStatus(t));
       return `<tr class="task-row ${taskStatusClass(t)}">
-      <td>${i+1}</td><td><span class="link" data-open-task="${t.id}">${esc(t.title)}</span></td><td>${a?`<span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span>`:'—'}</td><td>${esc(a?.client_name||'—')}</td><td>${m?`<span class="avatar" style="display:inline-grid;width:26px;height:26px;font-size:10px;margin-right:6px">${initials(m.full_name)}</span>${esc(m.full_name)}`:'Unassigned'}</td><td>${esc(t.source||'—')}</td><td>${badge(t.priority)}</td><td class="${isOverdue(t)?'danger':''}">${fmtDate(t.due_date)}</td><td>${badge(displayStatus(t))}</td><td><button class="btn small" data-open-task="${t.id}">${action}</button></td></tr>`; }).join('');
+      <td>${i+1}</td><td><span class="link" data-open-task="${t.id}">${esc(t.title)}</span>${t.generated_by_recurrence?'<div class="small muted">Recurring occurrence</div>':''}</td><td>${a?`<span class="link" data-open-account="${a.id}">${esc(a.account_name)}</span>`:'—'}</td><td>${a?.client_name?`<span class="link" data-view-client="${esc(a.client_name)}">${esc(a.client_name)}</span>`:'—'}</td><td>${assignedCell}</td><td>${sourceCell}</td><td>${priorityCell}</td><td>${dateCell}</td><td>${statusCell}</td><td><button class="btn small" data-open-task="${t.id}">${action}</button></td></tr>`;
+    }).join('');
     return `<div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>Task</th><th>Account</th><th>Client</th><th>Assigned To</th><th>Source</th><th>Priority</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows||'<tr><td colspan="10" class="empty">No tasks found</td></tr>'}</tbody></table></div>`;
   }
 
@@ -282,14 +409,35 @@
   }
 
   function calendarPage(){
-    const now=new Date(); const year=now.getFullYear(), month=now.getMonth(); const first=new Date(year,month,1); const days=new Date(year,month+1,0).getDate(); const start=first.getDay();
-    const cells=[]; for(let i=0;i<start;i++) cells.push('<div class="day"></div>');
+    const monthKey=state.calendarMonth||today().slice(0,7); state.calendarMonth=monthKey;
+    const [year,monthNumber]=monthKey.split('-').map(Number); const month=monthNumber-1;
+    const first=new Date(year,month,1); const days=new Date(year,month+1,0).getDate(); const start=first.getDay();
+    const cells=[]; for(let i=0;i<start;i++) cells.push('<div class="day day-empty"></div>');
     for(let day=1;day<=days;day++){
       const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
       const ts=state.tasks.filter(t=>t.due_date===iso);
-      cells.push(`<div class="day"><div class="day-num">${day}</div>${ts.slice(0,4).map(t=>`<div class="cal-task ${taskStatusClass(t)}" data-edit-task="${t.id}">${esc(t.title)}</div>`).join('')}${ts.length>4?`<div class="small muted">+${ts.length-4} more</div>`:''}</div>`);
+      cells.push(`<div class="day calendar-day-click" data-calendar-date="${iso}" title="Open tasks for ${esc(fmtDate(iso))}"><div class="day-num">${day}</div>${ts.slice(0,4).map(t=>`<div class="cal-task ${taskStatusClass(t)}" data-open-task="${t.id}" title="${esc(t.title)}">${esc(t.title)}</div>`).join('')}${ts.length>4?`<div class="small muted calendar-more">+${ts.length-4} more</div>`:''}</div>`);
     }
-    return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">View task deadlines by date</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div><div class="card panel"><h3>${now.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</h3><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
+    const monthLabel=new Date(year,month,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+    return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">Click any date to review historical or upcoming tasks, then filter by user.</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div><div class="card panel"><div class="calendar-title-row"><button class="btn" data-calendar-shift="-1">← Previous</button><h3>${esc(monthLabel)}</h3><button class="btn" data-calendar-shift="1">Next →</button></div><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
+  }
+
+  function shiftCalendarMonth(delta){
+    const key=state.calendarMonth||today().slice(0,7); const [y,m]=key.split('-').map(Number);
+    const d=new Date(y,m-1+Number(delta),1,12,0,0,0); state.calendarMonth=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; render();
+  }
+
+  function calendarDayModal(date, assignee=''){
+    const all=state.tasks.filter(t=>t.due_date===date).sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
+    const tasks=assignee==='__unassigned__'?all.filter(t=>!t.assigned_to):(assignee?all.filter(t=>t.assigned_to===assignee):all);
+    const completed=tasks.filter(isCompletedTask).length, overdue=tasks.filter(isOverdue).length, awaiting=tasks.filter(t=>normalizeTaskStatus(t.status)==='Awaiting').length;
+    modal(`Tasks — ${fmtDate(date)}`,`
+      <div class="calendar-day-toolbar"><div class="field" style="margin:0"><label>User</label><select id="calendarUserFilter"><option value="">All Users</option><option value="__unassigned__" ${assignee==='__unassigned__'?'selected':''}>Unassigned</option>${visibleTeam().map(m=>`<option value="${m.id}" ${assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div><div class="calendar-day-summary"><span>${tasks.length} assigned</span><span>${completed} completed</span><span>${awaiting} awaiting</span><span>${overdue} overdue</span></div></div>
+      <div class="calendar-day-list">${tasks.map(t=>{const m=memberById(t.assigned_to),a=accountById(t.account_id);return `<button class="calendar-day-task ${taskStatusClass(t)}" data-calendar-open-task="${t.id}"><span><b>${esc(t.title)}</b><small>${esc(a?.account_name||'No account')} · ${esc(m?.full_name||'Unassigned')}</small></span><span>${badge(displayStatus(t))}</span></button>`;}).join('')||'<div class="empty">No tasks for this user on this date.</div>'}</div>
+    `,'<button class="btn primary" id="closeCalendarDay">Close</button>');
+    closeCalendarDay.onclick=closeModalFn;
+    calendarUserFilter.onchange=e=>calendarDayModal(date,e.target.value);
+    document.querySelectorAll('#modal-root [data-calendar-open-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.calendarOpenTask)));
   }
 
   function reportsPage(){
@@ -341,9 +489,12 @@
   }
 
   function renderAuth(){
-    app.innerHTML=`<div class="auth-page"><div class="auth-card"><h1>${esc(cfg.APP_NAME||'Amazon Account Task Manager')}</h1><p class="muted">Sign in to manage accounts, tasks and your VA team.</p><form id="authForm"><div class="field"><label>Email</label><input id="authEmail" type="email" required></div><div class="field"><label>Password</label><input id="authPassword" type="password" minlength="6" required></div><button class="btn primary" style="width:100%" type="submit">Sign In</button></form><button class="btn" style="width:100%;margin-top:8px" id="signupBtn">Create Account</button><div id="authMsg" class="small muted" style="margin-top:12px"></div></div></div>`;
-    document.getElementById('authForm').onsubmit=async e=>{e.preventDefault(); const email=authEmail.value.trim(), password=authPassword.value; const {error}=await sb.auth.signInWithPassword({email,password}); authMsg.textContent=error?error.message:'Signed in';};
-    document.getElementById('signupBtn').onclick=async()=>{ const email=authEmail.value.trim(), password=authPassword.value; if(!email||password.length<6){authMsg.textContent='Enter email and a password of at least 6 characters.';return;} const full_name=prompt('Your full name?')||''; const {error}=await sb.auth.signUp({email,password,options:{data:{full_name}}}); authMsg.textContent=error?error.message:'Account created. Check your email if confirmation is enabled, then sign in.'; };
+    app.innerHTML=`<div class="auth-page"><div class="auth-card"><h1>${esc(cfg.APP_NAME||'Amazon Account Task Manager')}</h1><p class="muted">Sign in to manage accounts, tasks and your VA team.</p><form id="authForm"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email" required></div><div class="field"><label>Password</label><div class="password-wrap"><input id="authPassword" type="password" minlength="6" autocomplete="current-password" required><button class="password-toggle" type="button" id="toggleAuthPassword" aria-label="Show password">Show</button></div></div><button class="btn primary" style="width:100%" type="submit">Sign In</button></form><div class="auth-actions"><button class="text-btn" type="button" id="forgotPasswordBtn">Forgot Password?</button></div><button class="btn" style="width:100%;margin-top:8px" id="signupBtn">Create Account</button><div id="authMsg" class="small muted" style="margin-top:12px"></div></div></div>`;
+    const emailEl=document.getElementById('authEmail'), passwordEl=document.getElementById('authPassword'), msg=document.getElementById('authMsg');
+    document.getElementById('authForm').onsubmit=async e=>{e.preventDefault(); const email=emailEl.value.trim(), password=passwordEl.value; const {error}=await sb.auth.signInWithPassword({email,password}); msg.textContent=error?error.message:'Signed in';};
+    document.getElementById('toggleAuthPassword').onclick=()=>{const show=passwordEl.type==='password';passwordEl.type=show?'text':'password';toggleAuthPassword.textContent=show?'Hide':'Show';toggleAuthPassword.setAttribute('aria-label',show?'Hide password':'Show password');};
+    document.getElementById('forgotPasswordBtn').onclick=async()=>{const email=emailEl.value.trim();if(!email){msg.textContent='Enter your email first, then click Forgot Password.';emailEl.focus();return;}const {error}=await sb.auth.resetPasswordForEmail(email);msg.textContent=error?error.message:`Password reset email sent to ${email}. Check your inbox and spam folder.`;};
+    document.getElementById('signupBtn').onclick=async()=>{ const email=emailEl.value.trim(), password=passwordEl.value; if(!email||password.length<6){msg.textContent='Enter email and a password of at least 6 characters.';return;} const full_name=prompt('Your full name?')||''; const {error}=await sb.auth.signUp({email,password,options:{data:{full_name}}}); msg.textContent=error?error.message:'Account created. Check your email if confirmation is enabled, then sign in.'; };
   }
 
   function renderOnboarding(){
@@ -358,23 +509,57 @@
     document.querySelectorAll('[data-action="new-task"]').forEach(x=>x.onclick=()=>taskModal());
     document.querySelectorAll('[data-action="new-account"]').forEach(x=>x.onclick=()=>accountModal());
     document.querySelectorAll('[data-action="invite-va"]').forEach(x=>x.onclick=()=>inviteModal());
-    document.querySelectorAll('[data-open-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.openTask)));
-    document.querySelectorAll('[data-edit-task]').forEach(x=>x.onclick=()=>openTask(state.tasks.find(t=>t.id===x.dataset.editTask)));
+    document.querySelectorAll('[data-open-task]').forEach(x=>x.onclick=e=>{e.stopPropagation();openTask(state.tasks.find(t=>t.id===x.dataset.openTask));});
+    document.querySelectorAll('[data-edit-task]').forEach(x=>x.onclick=e=>{e.stopPropagation();openTask(state.tasks.find(t=>t.id===x.dataset.editTask));});
     document.querySelectorAll('[data-edit-account]').forEach(x=>x.onclick=()=>accountModal(state.accounts.find(a=>a.id===x.dataset.editAccount)));
     document.querySelectorAll('[data-login-access]').forEach(x=>x.onclick=()=>accountLoginAccessModal(state.accounts.find(a=>a.id===x.dataset.loginAccess)));
     document.querySelectorAll('[data-view-client]').forEach(x=>x.onclick=e=>{e.stopPropagation(); const name=x.dataset.viewClient||''; if(name) location.hash='#/accounts?client='+encodeURIComponent(name);});
     document.querySelector('[data-back-clients]')?.addEventListener('click',()=>{location.hash='#/accounts';});
     const clientJump=document.getElementById('clientJump'); if(clientJump) clientJump.onchange=e=>{const name=e.target.value; location.hash=name?'#/accounts?client='+encodeURIComponent(name):'#/accounts';};
-    document.querySelectorAll('[data-open-account]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.openAccount; location.hash='#/tasks';});
+    document.querySelectorAll('[data-open-account]').forEach(x=>x.onclick=e=>{e.stopPropagation();state.filters.account=x.dataset.openAccount; location.hash='#/tasks';});
     document.querySelectorAll('[data-account-tasks]').forEach(x=>x.onclick=()=>{state.filters.account=x.dataset.accountTasks; location.hash='#/tasks';});
     document.querySelectorAll('[data-edit-member]').forEach(x=>x.onclick=()=>memberModal(state.team.find(m=>m.id===x.dataset.editMember)));
     document.querySelectorAll('[data-restore-member]').forEach(x=>x.onclick=()=>restoreMemberData(state.team.find(m=>m.id===x.dataset.restoreMember)));
     document.querySelectorAll('[data-delete-member-record]').forEach(x=>x.onclick=()=>deleteRemovedMemberRecord(state.team.find(m=>m.id===x.dataset.deleteMemberRecord)));
     ['fAccount','fAssignee','fStatus','fPriority','fSource'].forEach(id=>{const el=document.getElementById(id); if(el)el.onchange=e=>{const key={fAccount:'account',fAssignee:'assignee',fStatus:'status',fPriority:'priority',fSource:'source'}[id];state.filters[key]=e.target.value;render();};});
+    const fDateMode=document.getElementById('fDateMode'); if(fDateMode)fDateMode.onchange=e=>{state.filters.dateMode=e.target.value;if(e.target.value!=='custom')state.filters.date='';render();};
+    const fDateCustom=document.getElementById('fDateCustom'); if(fDateCustom)fDateCustom.onchange=e=>{state.filters.date=e.target.value;render();};
+    document.querySelectorAll('[data-inline-task]').forEach(el=>el.onchange=e=>{e.stopPropagation();inlineUpdateTask(el.dataset.inlineTask,el.dataset.inlineField,el.value);});
+    document.querySelectorAll('[data-calendar-shift]').forEach(x=>x.onclick=()=>shiftCalendarMonth(Number(x.dataset.calendarShift||0)));
+    document.querySelectorAll('[data-calendar-date]').forEach(x=>x.onclick=e=>{if(e.target.closest('[data-open-task]'))return;calendarDayModal(x.dataset.calendarDate);});
+    document.querySelectorAll('[data-va-dashboard]').forEach(x=>x.onclick=()=>{state.dashboardMemberId=x.dataset.vaDashboard;state.dashboardMemberDateMode=state.dashboardMemberDateMode||'today';render();});
+    document.querySelector('[data-va-dashboard-close]')?.addEventListener('click',()=>{state.dashboardMemberId='';render();});
+    const vaDateMode=document.getElementById('vaDateMode'); if(vaDateMode)vaDateMode.onchange=e=>{state.dashboardMemberDateMode=e.target.value;if(e.target.value!=='custom')state.dashboardMemberDate='';render();};
+    const vaCustomDate=document.getElementById('vaCustomDate'); if(vaCustomDate)vaCustomDate.onchange=e=>{state.dashboardMemberDate=e.target.value;render();};
     document.querySelector('[data-action="save-profile"]')?.addEventListener('click',saveProfile);
     document.querySelector('[data-action="save-agency"]')?.addEventListener('click',saveAgency);
     document.querySelector('[data-action="signout"]')?.addEventListener('click',()=>sb.auth.signOut());
     document.querySelector('[data-action="reset-demo"]')?.addEventListener('click',()=>{if(confirm('Reset all demo data?')){localStorage.removeItem('amazon-agency-demo-v2');location.reload();}});
+  }
+
+  async function inlineUpdateTask(id, field, rawValue){
+    const t=state.tasks.find(x=>x.id===id); if(!t)return;
+    const statusOnly=field==='status';
+    if(!hasFullAccess() && !(statusOnly && state.profile?.role==='va' && t.assigned_to===state.profile?.id)){toast('You do not have permission to change this field.');render();return;}
+    let value=rawValue;
+    if(['assigned_to','due_date'].includes(field) && value==='') value=null;
+    if(field==='status') value=normalizeTaskStatus(value);
+    if(state.demo){
+      const patch={[field]:value};
+      if(field==='status') patch.completed_at=value==='Completed'?(t.completed_at||new Date().toISOString()):null;
+      Object.assign(t,patch); if(field==='status' && value==='Completed')ensureNextRecurringDemo(t); persistDemo();render();toast('Task updated');return;
+    }
+    if(field==='status' && !hasFullAccess()){
+      const {error}=await sb.rpc('update_my_task_status',{p_task_id:id,p_status:value});
+      if(error){toast(error.message);render();return;} await loadData();toast(value==='Completed'?'Task completed':'Task status updated');return;
+    }
+    const patch={[field]:value};
+    if(field==='status') patch.completed_at=value==='Completed'?(t.completed_at||new Date().toISOString()):null;
+    const {error}=await sb.from('tasks').update(patch).eq('id',id);
+    if(error){toast(error.message);render();return;}
+    let recurrenceError=null;
+    if(field==='status' && value==='Completed' && t.recurring){const next=await sb.rpc('ensure_next_recurrence',{p_task_id:id});recurrenceError=next.error;}
+    await loadData();toast(recurrenceError?`Task updated, but next recurring task was not created: ${recurrenceError.message}`:'Task updated');
   }
 
   function modal(title, body, foot=''){
@@ -452,7 +637,7 @@
       <div class="field"><label>Task</label><input value="${esc(t.title||'')}" disabled></div>
       <div class="two"><div class="field"><label>Account</label><input value="${esc(a?.account_name||'—')}" disabled></div><div class="field"><label>Due Date</label><input value="${esc(fmtDate(t.due_date))}" disabled></div></div>
       <div class="field"><label>Owner Instructions / Description</label><textarea rows="4" disabled>${esc(t.description||'')}</textarea></div>
-      <div class="field"><label>Status</label><select id="vaTaskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Completed'].map(v=>`<option ${t.status===v?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select id="vaTaskStatus">${TASK_STATUSES.map(v=>`<option ${normalizeTaskStatus(t.status)===v?'selected':''}>${v}</option>`).join('')}</select></div>
       <p class="small muted">You can update the status and add notes on tasks assigned to you. Other task fields remain controlled by an Owner or Manager.</p>
       ${taskNotesSection(t,true)}
     `,'<button class="btn" id="cancelVaTask">Cancel</button><button class="btn primary" id="saveVaTask">Save Status</button>');
@@ -464,22 +649,24 @@
 
   async function saveVaTaskStatus(t){
     if(!t || t.assigned_to!==state.profile?.id){ toast('This task is not assigned to your login.'); return; }
-    const status=vaTaskStatus.value;
+    const status=normalizeTaskStatus(vaTaskStatus.value);
+    if(state.demo){t.status=status;t.completed_at=status==='Completed'?(t.completed_at||new Date().toISOString()):null;if(status==='Completed')ensureNextRecurringDemo(t);persistDemo();closeModalFn();render();toast(status==='Completed'?'Task marked completed':'Task status updated');return;}
     const {error}=await sb.rpc('update_my_task_status',{p_task_id:t.id,p_status:status});
     if(error){ toast(error.message); return; }
-    closeModalFn(); await loadData(); toast(status==='Completed'?'Task marked completed':'Task status updated');
+    closeModalFn(); await loadData(); toast(status==='Completed'?'Task marked completed. Next recurring task created when applicable.':'Task status updated');
   }
 
   function taskModal(t=null){
     if(!hasFullAccess()){ if(t) return openTask(t); toast('Only an owner or manager can create tasks.'); return; }
     const edit=!!t; const x=t||{title:'',account_id:state.filters.account||'',assigned_to:'',received_by:state.profile?.id||'',source:'Internal',status:'Not Started',priority:'Medium',due_date:today(),description:'',recurring:false,recurrence:''};
+    const currentStatus=normalizeTaskStatus(x.status);
     modal(edit?'Edit Task':'New Task',`<form id="taskForm">
       <div class="field"><label>Task</label><input id="taskTitle" value="${esc(x.title)}" required placeholder="e.g. PPC campaign optimization"></div>
       <div class="two"><div class="field"><label>Account</label><select id="taskAccount" required><option value="">Select account</option>${state.accounts.map(a=>`<option value="${a.id}" ${x.account_id===a.id?'selected':''}>${esc(a.account_name)} — ${esc(a.client_name||'')}</option>`).join('')}</select></div><div class="field"><label>Assigned To</label><select id="taskAssignee"><option value="">Unassigned</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.assigned_to===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
-      <div class="two"><div class="field"><label>Task Source</label><select id="taskSource">${['Email','Slack','WhatsApp','Upwork','Fiverr','Client Portal','Call','Internal','Other'].map(v=>`<option ${x.source===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Received By</label><select id="taskReceived"><option value="">Not set</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.received_by===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
-      <div class="two"><div class="field"><label>Status</label><select id="taskStatus">${['Not Started','In Progress','Waiting on Client','Blocked','Completed'].map(v=>`<option ${x.status===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Priority</label><select id="taskPriority">${['High','Medium','Low'].map(v=>`<option ${x.priority===v?'selected':''}>${v}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Task Source</label><select id="taskSource">${[...new Set([...TASK_SOURCES,x.source].filter(Boolean))].map(v=>`<option value="${esc(v)}" ${x.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select></div><div class="field"><label>Assigned By</label><select id="taskReceived"><option value="">Not set</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.received_by===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
+      <div class="two"><div class="field"><label>Status</label><select id="taskStatus">${TASK_STATUSES.map(v=>`<option value="${v}" ${currentStatus===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Priority</label><select id="taskPriority">${TASK_PRIORITIES.map(v=>`<option value="${v}" ${x.priority===v?'selected':''}>${v}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Due Date</label><input id="taskDue" type="date" value="${esc(x.due_date||'')}"></div><div class="field"><label>Recurring</label><select id="taskRecurring"><option value="false" ${!x.recurring?'selected':''}>No</option><option value="true" ${x.recurring?'selected':''}>Yes</option></select></div></div>
-      <div class="field"><label>Recurrence</label><select id="taskRecurrence"><option value="">None</option>${['Daily','Weekly','Monthly'].map(v=>`<option ${x.recurrence===v?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Recurrence</label><select id="taskRecurrence"><option value="">None</option>${['Daily','Weekly','Monthly'].map(v=>`<option value="${v}" ${x.recurrence===v?'selected':''}>${v}</option>`).join('')}</select><div class="small muted">When a recurring task is completed, this occurrence stays in history and a new Not Started occurrence is created with the next due date.</div></div>
       <div class="field"><label>Notes / Description</label><textarea id="taskDescription" rows="4" placeholder="Details, client request, links...">${esc(x.description||'')}</textarea></div>
       ${edit?taskNotesSection(t,true):''}
     </form>`,`${edit?'<button class="btn red" id="deleteTask">Delete</button>':''}<button class="btn" id="cancelTask">Cancel</button><button class="btn primary" id="saveTask">${edit?'Save Changes':'Create Task'}</button>`);
@@ -489,12 +676,16 @@
 
   async function saveTaskData(id){
     const data={
-      account_id:taskAccount.value||null,title:taskTitle.value.trim(),assigned_to:taskAssignee.value||null,received_by:taskReceived.value||null,source:taskSource.value,status:taskStatus.value,priority:taskPriority.value,due_date:taskDue.value||null,recurring:taskRecurring.value==='true',recurrence:taskRecurrence.value||null,description:taskDescription.value.trim()
+      account_id:taskAccount.value||null,title:taskTitle.value.trim(),assigned_to:taskAssignee.value||null,received_by:taskReceived.value||null,source:taskSource.value,status:normalizeTaskStatus(taskStatus.value),priority:taskPriority.value,due_date:taskDue.value||null,recurring:taskRecurring.value==='true',recurrence:taskRecurrence.value||null,description:taskDescription.value.trim()
     };
     if(!data.title||!data.account_id){toast('Task and account are required');return;}
+    if(data.recurring && !data.recurrence){toast('Choose Daily, Weekly, or Monthly recurrence.');return;}
+    if(!data.recurring)data.recurrence=null;
     if(state.demo){
-      if(id){const i=state.tasks.findIndex(t=>t.id===id);state.tasks[i]={...state.tasks[i],...data,completed_at:data.status==='Completed'?(state.tasks[i].completed_at||new Date().toISOString()):null};}
-      else state.tasks.push({id:'t'+Date.now(),...data,created_at:new Date().toISOString(),completed_at:data.status==='Completed'?new Date().toISOString():null});
+      let saved;
+      if(id){const i=state.tasks.findIndex(t=>t.id===id);state.tasks[i]={...state.tasks[i],...data,completed_at:data.status==='Completed'?(state.tasks[i].completed_at||new Date().toISOString()):null};saved=state.tasks[i];}
+      else {saved={id:'t'+Date.now(),...data,created_at:new Date().toISOString(),completed_at:data.status==='Completed'?new Date().toISOString():null};state.tasks.push(saved);}
+      if(data.status==='Completed' && data.recurring)ensureNextRecurringDemo(saved);
       persistDemo();closeModalFn();render();toast('Task saved');return;
     }
     if(!hasFullAccess()){toast('Only an owner or manager can create or fully edit tasks.');return;}
@@ -503,8 +694,13 @@
     data.completed_at=data.status==='Completed'?(existing?.completed_at||new Date().toISOString()):null;
     if(!id) data.created_by=state.user.id;
     const res=id?await sb.from('tasks').update(data).eq('id',id):await sb.from('tasks').insert(data);
-    if(res.error){toast(res.error.message);return;} closeModalFn();await loadData();toast('Task saved');
+    if(res.error){toast(res.error.message);return;}
+    const savedId=id || res.data?.[0]?.id;
+    let recurrenceError=null;
+    if(savedId && data.status==='Completed' && data.recurring){const next=await sb.rpc('ensure_next_recurrence',{p_task_id:savedId});recurrenceError=next.error;}
+    closeModalFn();await loadData();toast(recurrenceError?`Task saved, but next recurring task was not created: ${recurrenceError.message}`:'Task saved');
   }
+
   async function deleteTaskData(id){ if(!hasFullAccess()){toast('Only an owner or manager can delete tasks.');return;} if(!confirm('Delete this task?'))return; if(state.demo){state.tasks=state.tasks.filter(t=>t.id!==id);persistDemo();closeModalFn();render();return;} const {error}=await sb.from('tasks').delete().eq('id',id); if(error)toast(error.message);else{closeModalFn();await loadData();} }
 
   function accountModal(a=null){
