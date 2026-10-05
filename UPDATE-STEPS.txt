@@ -1,9 +1,85 @@
-1. Upload/replace every file from this ZIP in the same GitHub repository and commit.
-2. Firebase -> Firestore Database -> Rules: replace the current rules with the included firestore.rules and click Publish.
-3. Confirm Firebase Authentication -> Sign-in method -> Email/Password is enabled.
-4. Wait for GitHub Pages to deploy, then hard refresh the site (Ctrl+F5).
-5. Test Forgot Password with a real user email.
-6. Create a recurring Daily/Weekly/Monthly task, mark it Completed, and confirm the completed occurrence stays in history while one new Not Started occurrence appears on the next date.
-7. Test Tasks date filters and inline edits as Owner/Manager; test status-only inline editing as a VA.
-8. Open Calendar, move between months, click a date, and filter that date by user.
-9. On Dashboard, click a name under Tasks by VA and test Today/Yesterday/Tomorrow/Select Date plus Close.
+AMAZON AGENCY TASK MANAGER - RECURRENCE + HISTORY FIX
+Build: 20261006-recurrence2
+
+BEFORE STARTING
+Keep a copy of your existing site files and published Firestore rules.
+Do not delete your tasks, change Firebase projects, or toggle old Completed tasks back
+and forth to fix recurrence. Ask the team not to edit during the short deployment.
+
+1. REPLACE THE WEBSITE FILES
+Upload these files from the ZIP to the same location as your current index.html:
+  index.html
+  styles.css
+  app.js
+  firebase-adapter.js
+  task-workflow.js   <-- NEW FILE: must be uploaded too!
+Keep your existing config.js. The copy included in this ZIP matches the uploaded build.
+Commit and wait for your normal GitHub Pages/hosting deployment to finish.
+You do not need npm or any new hosting service to run this static app.
+
+2. PUBLISH FIRESTORE RULES - REQUIRED
+Open Firebase Console and select the SAME project identified by config.js.
+Open Firestore Database -> Rules (not Realtime Database or Storage rules).
+Replace the entire rules file with the included firestore.rules and click Publish.
+Do not use an allow-all/test-mode rule as a workaround.
+Rules deployment and website deployment are separate; replacing GitHub files alone
+will not publish Firestore rules. Make sure BOTH deployments finish before testing.
+
+3. REFRESH
+Wait at least a minute after publishing rules. Hard-refresh the site (Ctrl+F5).
+If necessary, close old tabs and sign in again. Firebase notes that existing listeners
+may take longer to pick up rule changes. In Settings, check:
+  Build: 20261006-recurrence2
+
+4. BACK UP THE CURRENT TASK RECORDS
+Settings -> Download Task Backup.
+This downloads task JSON only, not a complete Firestore backup. Keep it before recovery.
+
+5. REPAIR PREVIOUS FAILED RECURRENCES
+Settings -> Review Missing Occurrences, or Tasks -> Recurring Recovery.
+For each affected completed task:
+  - Check the title and assigned user.
+  - Choose the intended recurrence: Daily, Weekly or Monthly.
+  - Verify the completed occurrence's ORIGINAL due date.
+  - Check the next-date preview, then click Create Next Task and confirm.
+
+EXAMPLE FOR THE REPORTED CASE
+You manually changed a completed task's due date from October 5 to October 6.
+When you KNOW the completed occurrence originally belonged to October 5:
+  Original due date: 2026-10-05
+  Recurrence: Daily
+  Preview: October 6, 2026 - Not Started
+The existing task stays Completed on October 5 with its original completion timestamp.
+One separate Not Started occurrence is created for October 6.
+
+Do not set every task to October 5 blindly. Old dates are not guessed automatically.
+Do not use recovery to revive a deliberately deleted next occurrence.
+Tasks already having a next occurrence are not duplicated or overwritten.
+A changed/deleted completion timestamp cannot be reconstructed without evidence/backup.
+
+6. FIND YESTERDAY'S COMPLETED WORK
+Tasks -> Clear Filters -> Completed On -> Yesterday.
+For tasks whose DUE DATE was yesterday, choose Due Date -> Yesterday instead.
+Calendar offers the same selector. Click the day number, then select a user.
+Completion dates use your device's local timezone; unknown completion times are not guessed.
+
+7. TEST ONE FRESH TASK BEFORE RESUMING NORMAL USE
+Create a Daily recurring test task with today's due date.
+Mark it Completed. Confirm:
+  - Original: Completed, today's original due date.
+  - New separate occurrence: Not Started, tomorrow's due date.
+  - Tasks -> Due Date -> Tomorrow shows the new occurrence.
+  - Re-saving the original does not create another copy.
+Repeat with an assigned VA login to verify the deployed role rules too.
+If permissions are denied, the new flow should leave both records unchanged.
+
+WHAT DID NOT CHANGE
+This is completion-triggered recurrence, not an automatic midnight scheduler.
+The next date remains original due date + recurrence; overdue dates are not skipped.
+Uncompleted recurring tasks do not generate another occurrence automatically.
+
+IF PERMISSION ERRORS CONTINUE
+Check the project in config.js against the Firebase Console project.
+Check Firestore Rules were published and all tabs have loaded the new site files.
+Do not weaken the rules, re-date completed tasks, or delete history to bypass the error.
+See TEST-RESULTS.md for the test scope: no live Firebase project was accessed here.

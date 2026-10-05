@@ -247,7 +247,15 @@ service cloud.firestore {
     }
 
     match /tasks/{id} {
-      allow read: if sameAgency(resource.data.agency_id);
+      // A transaction checks whether the deterministic next occurrence exists.
+      // Missing documents have NO resource.data, even for an Owner/Manager.
+      // Only active members may probe missing recurrence IDs. Existing documents
+      // and all queries still require the requesting user's own agency.
+      allow get: if isActiveMember() && (
+        (id.matches('rec_.*') && !exists(taskPath(id)))
+        || sameAgency(resource.data.agency_id)
+      );
+      allow list: if sameAgency(resource.data.agency_id);
 
       allow create: if (isLeadership()
         && request.resource.data.agency_id == myAgency())
@@ -271,6 +279,16 @@ service cloud.firestore {
           && request.resource.data.title == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.title
           && request.resource.data.assigned_to == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.assigned_to
           && request.resource.data.recurrence == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.recurrence
+          && getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.recurrence_next_id == id
+          && request.resource.data.series_id == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.get('series_id', request.resource.data.recurrence_parent_id)
+          && request.resource.data.recurrence_index == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.get('recurrence_index', 0) + 1
+          && request.resource.data.source == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.get('source', 'Internal')
+          && request.resource.data.priority == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.get('priority', 'Medium')
+          && request.resource.data.received_by == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.get('received_by', null)
+          && request.resource.data.description == getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.get('description', '')
+          && request.resource.data.due_date is string
+          && request.resource.data.due_date > getAfter(taskPath(request.resource.data.recurrence_parent_id)).data.due_date
+          && request.resource.data.keys().hasOnly(['agency_id', 'account_id', 'title', 'assigned_to', 'received_by', 'source', 'status', 'priority', 'due_date', 'recurring', 'recurrence', 'description', 'completed_at', 'completion_due_date', 'created_at', 'created_by', 'generated_by_recurrence', 'recurrence_parent_id', 'series_id', 'recurrence_index'])
         );
 
       allow update: if sameAgency(resource.data.agency_id)
@@ -281,7 +299,24 @@ service cloud.firestore {
           (resource.data.assigned_to == request.auth.uid
             && request.resource.data.assigned_to == resource.data.assigned_to
             && request.resource.data.status in ['Not Started', 'In Progress', 'Awaiting', 'Waiting on Client', 'Blocked', 'Completed']
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completed_at', 'completion_due_date', 'recurrence_next_id'])
+            && (
+              (request.resource.data.status == 'Completed'
+                && request.resource.data.get('completion_due_date', resource.data.due_date) == resource.data.due_date)
+              || (request.resource.data.status != 'Completed'
+                && request.resource.data.get('completion_due_date', null) == null
+                && request.resource.data.completed_at == null)
+            )
+            && (
+              request.resource.data.get('recurrence_next_id', null) == resource.data.get('recurrence_next_id', null)
+              || (resource.data.get('recurrence_next_id', null) == null
+                && request.resource.data.status == 'Completed'
+                && resource.data.recurring == true
+                && request.resource.data.recurrence_next_id is string
+                && getAfter(taskPath(request.resource.data.recurrence_next_id)).data.recurrence_parent_id == id
+                && getAfter(taskPath(request.resource.data.recurrence_next_id)).data.agency_id == myAgency()
+                && getAfter(taskPath(request.resource.data.recurrence_next_id)).data.assigned_to == request.auth.uid)
+            ))
         );
 
       allow delete: if isLeadership()

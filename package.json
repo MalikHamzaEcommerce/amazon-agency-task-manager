@@ -1,0 +1,15 @@
+{
+  "name": "amazon-agency-task-manager-workflow-tests",
+  "version": "2.0.1",
+  "private": true,
+  "description": "Optional development tests only. The app itself is still static HTML and JavaScript.",
+  "scripts": {
+    "test": "node --test tests/workflow.test.cjs tests/adapter.test.cjs",
+    "test:rules": "firebase --project demo-recurrence-tests --config firebase.test.json emulators:exec --only firestore \"node --test tests/firestore-emulator.cjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "3.0.4",
+    "firebase": "10.12.5",
+    "firebase-tools": "14.22.0"
+  }
+}

@@ -4,6 +4,8 @@
   const sb = hasFirebase ? window.supabase.createClient() : null;
   const app = document.getElementById('app');
   const modalRoot = document.getElementById('modal-root');
+  const workflow = window.TaskWorkflow;
+  if (!workflow) { app.textContent='Update incomplete: upload task-workflow.js, then hard refresh.'; return; }
 
   const ICONS = {
     dashboard:'▦', accounts:'▣', tasks:'☑', my:'◉', team:'♙', calendar:'▤', reports:'◔', settings:'⚙'
@@ -22,11 +24,14 @@
     team: [],
     route: 'dashboard',
     search: '',
-    filters: { account:'', assignee:'', status:'', priority:'', source:'', dateMode:'', date:'' },
+    filters: { account:'', assignee:'', status:'', priority:'', source:'', dateMode:'', date:'', dateBasis:'due' },
     dashboardMemberId: '',
     dashboardMemberDateMode: 'today',
     dashboardMemberDate: '',
-    calendarMonth: ''
+    calendarMonth: '',
+    calendarDateBasis: 'due',
+    dashboardMemberDateBasis: 'due',
+    dataLoadError: ''
   };
 
   const DEMO = {
@@ -87,18 +92,7 @@
   function today(){ return toISODateLocal(new Date()); }
   function shiftedDate(days=0){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+days); return toISODateLocal(d); }
   function fmtDate(v){ if(!v) return '—'; const d=new Date(v+'T00:00:00'); return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
-  function recurrenceNextDate(dateStr, recurrence){
-    if(!dateStr || !['Daily','Weekly','Monthly'].includes(recurrence)) return null;
-    const parts=String(dateStr).split('-').map(Number); if(parts.length!==3||parts.some(Number.isNaN)) return null;
-    const [y,m,d]=parts;
-    if(recurrence==='Monthly'){
-      const nextMonthStart=new Date(y,m,1,12,0,0,0);
-      const lastDay=new Date(nextMonthStart.getFullYear(),nextMonthStart.getMonth()+1,0).getDate();
-      nextMonthStart.setDate(Math.min(d,lastDay));
-      return toISODateLocal(nextMonthStart);
-    }
-    const x=new Date(y,m-1,d,12,0,0,0); x.setDate(x.getDate()+(recurrence==='Weekly'?7:1)); return toISODateLocal(x);
-  }
+  function recurrenceNextDate(dateStr, recurrence){ return workflow.nextDate(dateStr, recurrence); }
   function dateFromMode(mode, custom=''){
     if(mode==='today') return today();
     if(mode==='yesterday') return shiftedDate(-1);
@@ -120,15 +114,11 @@
   }
   function isCompletedTask(t){ return normalizeTaskStatus(t?.status)==='Completed'; }
   function isOverdue(t){ return !isCompletedTask(t) && t.due_date && t.due_date < today(); }
-  function completedToday(t){
-    if(!isCompletedTask(t)) return false;
-    const completed=(t.completed_at||'').slice(0,10);
-    return completed ? completed===today() : t.due_date===today();
-  }
+  function completedToday(t){ return workflow.completedDate(t)===today(); }
   function displayStatus(t){ return isOverdue(t) ? 'Overdue' : normalizeTaskStatus(t.status); }
   function taskStatusClass(t){ return `status-${slug(displayStatus(t))}`; }
   function initials(name=''){ return name.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase() || 'U'; }
-  function toast(msg){ const d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
+  function toast(msg){ document.querySelectorAll('.toast').forEach(el=>el.remove()); const d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); d.setAttribute('role','status'); setTimeout(()=>d.remove(),msg.length>110?10000:4500); }
   function isOwnerUser(){ return state.profile?.role === 'owner'; }
   function isManagerUser(){ return state.profile?.role === 'manager'; }
   function hasFullAccess(){ return isOwnerUser() || isManagerUser(); }
@@ -150,43 +140,39 @@
   function canUpdateTask(t){ return hasFullAccess() || (state.profile?.role === 'va' && t?.assigned_to === state.profile?.id); }
   function dashboardCurrentScope(){ return state.tasks.filter(t=>!isCompletedTask(t) || completedToday(t)); }
   function buildRecurringChild(t, id){
-    if(!t?.recurring || !t?.recurrence || !t?.due_date || !isCompletedTask(t)) return null;
-    const nextDue=recurrenceNextDate(t.due_date,t.recurrence); if(!nextDue) return null;
-    const seriesId=t.series_id||t.id;
-    return {
-      id,
-      agency_id:t.agency_id||state.profile?.agency_id||state.agency?.id||null,
-      account_id:t.account_id||null,
-      title:t.title||'',
-      assigned_to:t.assigned_to||null,
-      received_by:t.received_by||null,
-      source:t.source||'Internal',
-      status:'Not Started',
-      priority:t.priority||'Medium',
-      due_date:nextDue,
-      recurring:true,
-      recurrence:t.recurrence,
-      description:t.description||'',
-      completed_at:null,
-      created_at:new Date().toISOString(),
-      created_by:state.profile?.id||state.user?.id||null,
-      generated_by_recurrence:true,
-      recurrence_parent_id:t.id,
-      series_id:seriesId,
-      recurrence_index:(Number(t.recurrence_index)||0)+1
-    };
+    const child=workflow.child({...t,agency_id:t.agency_id||state.profile?.agency_id||state.agency?.id},t.id,state.profile?.id,new Date().toISOString());
+    return child?{id,...child}:null;
   }
   function ensureNextRecurringDemo(t){
     if(!t?.id || !isCompletedTask(t) || !t.recurring) return null;
-    const nextDue=recurrenceNextDate(t.due_date,t.recurrence); if(!nextDue) return null;
-    const seriesId=t.series_id||t.id;
-    const nextIndex=(Number(t.recurrence_index)||0)+1;
-    const existing=state.tasks.find(x=>x.id!==t.id && x.series_id===seriesId && Number(x.recurrence_index)===nextIndex && x.generated_by_recurrence===true);
-    if(existing) return existing;
-    const safeSeries=String(seriesId).replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,120);
-    const id=`rec_${safeSeries}_${nextIndex}`;
-    const child=buildRecurringChild(t,id); if(!child) return null;
-    state.tasks.push(child); return child;
+    const id=workflow.nextId(t,t.id);
+    const existing=state.tasks.find(x=>x.id===id || (x.recurrence_parent_id===t.id && x.generated_by_recurrence));
+    t.recurrence_next_id=existing?.id||id;
+    if(existing)return existing;
+    const child=buildRecurringChild(t,id);
+    if(child)state.tasks.push(child);
+    return child;
+  }
+  function missingRecurringTasks(){
+    if(state.dataLoadError)return [];
+    return state.tasks.filter(t=>isCompletedTask(t) && t.recurring===true &&
+      !state.tasks.some(x=>x.id===(t.recurrence_next_id||workflow.nextId(t,t.id)) || x.recurrence_parent_id===t.id));
+  }
+  function recoveryBanner(){
+    const count=missingRecurringTasks().length;
+    return hasFullAccess()&&count?`<div class="recovery-banner" role="status"><div><b>${count} completed recurring task${count===1?' needs':'s need'} review</b><div class="small">A next occurrence is missing. Keep the completed record; review its original due date before creating the next task.</div></div><button class="btn" data-action="recurring-recovery">Recurring Recovery</button></div>`:'';
+  }
+  function dateBasisSelect(id,basis){
+    return `<select id="${id}" aria-label="Date field"><option value="due" ${basis!=='completed'?'selected':''}>Due Date</option><option value="completed" ${basis==='completed'?'selected':''}>Completed On</option></select>`;
+  }
+  function saveFailure(error){
+    const message=error?.message||'Unknown error';
+    return (error?.code||'').includes('permission-denied') || /insufficient permissions/i.test(message)
+      ? 'Nothing was saved. Publish the updated firestore.rules in the SAME Firebase project, wait a minute, then refresh and retry.'
+      : `Nothing was saved: ${message}`;
+  }
+  function completionSuccess(result,label='Task saved'){
+    return result?.created_next?`${label}. Next task: ${fmtDate(result.next_due_date)} - Not Started.`:label;
   }
 
   function navItems(){
@@ -240,8 +226,10 @@
     const sources={}; scope.forEach(t=>sources[t.source]=(sources[t.source]||0)+1);
     const maxTeam=Math.max(1,...teamCounts.map(x=>x.count));
     const maxSource=Math.max(1,...Object.values(sources));
-    const currentRows=state.tasks.filter(t=>!isCompletedTask(t) || !t.due_date || t.due_date>=today());
-    const rows=filterTasks(currentRows).slice(0,8);
+    const historyView=!!state.filters.dateMode || state.filters.dateBasis==='completed' || state.filters.status==='Completed';
+    const currentRows=historyView?state.tasks:state.tasks.filter(t=>!isCompletedTask(t) || !workflow.dueDate(t) || workflow.dueDate(t)>=today());
+    const filteredRows=filterTasks(currentRows);
+    const rows=historyView?filteredRows:filteredRows.slice(0,8);
     return `
       <div class="page-head"><div><h1>Dashboard</h1><p class="muted">Overview of current Amazon account work and team activity</p></div>${hasFullAccess()?'<div class="actions"><button class="btn primary" data-action="new-task">＋ Add Task</button></div>':''}</div>
       <div class="grid kpi-grid">
@@ -253,7 +241,8 @@
         <div class="card widget"><h3>Tasks by Source</h3>${Object.entries(sources).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`<div class="source-row"><span>${esc(s)}</span><div class="bar green"><i style="width:${Math.round(n/maxSource*100)}%"></i></div><b>${n}</b></div>`).join('')||'<div class="empty">No sources yet</div>'}</div>
       </div>
       ${state.dashboardMemberId?vaDashboardPanel():''}
-      ${taskTableCard("Today's / Current Tasks", rows, true)}
+      ${recoveryBanner()}
+      ${taskTableCard(historyView?"Task History / Selected Filters":"Today's / Current Tasks (first 8)", rows, true)}
       <div class="grid split" style="margin-top:14px">
         <div class="card panel"><div class="page-head"><div><h3 style="margin:0">Accounts Overview</h3></div><button class="btn" onclick="location.hash='#/accounts'">View All</button></div>${accountsMini()}</div>
         <div class="card panel"><div class="page-head"><div><h3 style="margin:0">Upcoming Deadlines</h3></div></div>${upcomingMini()}</div>
@@ -263,10 +252,11 @@
   function vaDashboardPanel(){
     const m=activeTeam().find(x=>x.id===state.dashboardMemberId);
     if(!m){ state.dashboardMemberId=''; return ''; }
-    const mode=state.dashboardMemberDateMode||'today';
+    const mode=state.dashboardMemberDateMode??'today';
     const date=dateFromMode(mode,state.dashboardMemberDate);
     let tasks=state.tasks.filter(t=>t.assigned_to===m.id);
-    if(date) tasks=tasks.filter(t=>t.due_date===date);
+    if(state.dashboardMemberDateBasis==='completed')tasks=tasks.filter(isCompletedTask);
+    if(date) tasks=tasks.filter(t=>workflow.dateFor(t,state.dashboardMemberDateBasis)===date);
     tasks=tasks.slice().sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999') || String(a.title||'').localeCompare(String(b.title||'')));
     const counts={
       assigned:tasks.length,
@@ -278,7 +268,7 @@
     const label=date?fmtDate(date):'All Dates';
     return `<div class="card va-detail-panel">
       <div class="va-detail-head"><div><h3>${esc(m.full_name)} — ${esc(label)}</h3><div class="muted small">Assigned task detail and completion snapshot</div></div><button class="btn" data-va-dashboard-close>× Close</button></div>
-      <div class="va-detail-controls"><select id="vaDateMode"><option value="" ${mode===''?'selected':''}>All Dates</option><option value="today" ${mode==='today'?'selected':''}>Today</option><option value="yesterday" ${mode==='yesterday'?'selected':''}>Yesterday</option><option value="tomorrow" ${mode==='tomorrow'?'selected':''}>Tomorrow</option><option value="custom" ${mode==='custom'?'selected':''}>Select Date</option></select>${mode==='custom'?`<input id="vaCustomDate" type="date" value="${esc(state.dashboardMemberDate||'')}">`:''}</div>
+      <div class="va-detail-controls">${dateBasisSelect('vaDateBasis',state.dashboardMemberDateBasis)}<select id="vaDateMode"><option value="" ${mode===''?'selected':''}>All Dates</option><option value="today" ${mode==='today'?'selected':''}>Today</option><option value="yesterday" ${mode==='yesterday'?'selected':''}>Yesterday</option><option value="tomorrow" ${mode==='tomorrow'?'selected':''}>Tomorrow</option><option value="custom" ${mode==='custom'?'selected':''}>Select Date</option></select>${mode==='custom'?`<input id="vaCustomDate" type="date" value="${esc(state.dashboardMemberDate||'')}">`:''}</div>
       <div class="va-stat-grid"><div class="va-stat"><span>Assigned</span><b>${counts.assigned}</b></div><div class="va-stat"><span>Completed</span><b>${counts.completed}</b></div><div class="va-stat"><span>Pending</span><b>${counts.pending}</b></div><div class="va-stat"><span>Awaiting</span><b>${counts.awaiting}</b></div><div class="va-stat"><span>Overdue</span><b>${counts.overdue}</b></div></div>
       ${taskTable(tasks)}
     </div>`;
@@ -339,8 +329,10 @@
       <select id="fStatus"><option value="">All Status</option>${TASK_STATUSES.map(v=>`<option value="${v}" ${state.filters.status===v?'selected':''}>${v}</option>`).join('')}</select>
       <select id="fPriority"><option value="">All Priority</option>${TASK_PRIORITIES.map(v=>`<option value="${v}" ${state.filters.priority===v?'selected':''}>${v}</option>`).join('')}</select>
       <select id="fSource"><option value="">All Sources</option>${vals(state.tasks,'source').map(v=>`<option value="${esc(v)}" ${state.filters.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>
+      ${dateBasisSelect('fDateBasis',state.filters.dateBasis)}
       <select id="fDateMode"><option value="" ${mode===''?'selected':''}>All Dates</option><option value="today" ${mode==='today'?'selected':''}>Today</option><option value="yesterday" ${mode==='yesterday'?'selected':''}>Yesterday</option><option value="tomorrow" ${mode==='tomorrow'?'selected':''}>Tomorrow</option><option value="custom" ${mode==='custom'?'selected':''}>Select Date</option></select>
       ${mode==='custom'?`<input id="fDateCustom" type="date" value="${esc(state.filters.date||'')}" aria-label="Select task date">`:''}
+      <button class="btn small" data-action="clear-task-filters">Clear Filters</button>
     </div>`;
   }
   function filterTasks(input){
@@ -352,7 +344,8 @@
         && (!state.filters.status||normalizeTaskStatus(t.status)===state.filters.status)
         && (!state.filters.priority||t.priority===state.filters.priority)
         && (!state.filters.source||t.source===state.filters.source)
-        && (!selectedDate||t.due_date===selectedDate)
+        && (state.filters.dateBasis!=='completed'||isCompletedTask(t))
+        && (!selectedDate||workflow.dateFor(t,state.filters.dateBasis)===selectedDate)
         && matchesGlobal([t.title,t.description,t.source,normalizeTaskStatus(t.status),t.priority,a?.account_name,a?.client_name,m?.full_name]);
     }).sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999') || String(a.title||'').localeCompare(String(b.title||'')));
   }
@@ -376,7 +369,7 @@
         : (m?`<span class="avatar mini-avatar">${initials(m.full_name)}</span>${esc(m.full_name)}`:'Unassigned');
       const sourceCell=hasFullAccess()?`<select class="inline-control" data-inline-task="${t.id}" data-inline-field="source">${sourceOptions.map(v=>`<option value="${esc(v)}" ${t.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select>`:esc(t.source||'—');
       const priorityCell=hasFullAccess()?`<select class="inline-control priority-inline" data-inline-task="${t.id}" data-inline-field="priority">${TASK_PRIORITIES.map(v=>`<option value="${v}" ${t.priority===v?'selected':''}>${v}</option>`).join('')}</select>`:badge(t.priority);
-      const dateCell=hasFullAccess()?`<input class="inline-control inline-date ${isOverdue(t)?'danger':''}" data-inline-task="${t.id}" data-inline-field="due_date" type="date" value="${esc(t.due_date||'')}">`:`<span class="${isOverdue(t)?'danger':''}">${fmtDate(t.due_date)}</span>`;
+      const dateCell=hasFullAccess()&&!isCompletedTask(t)?`<input class="inline-control inline-date ${isOverdue(t)?'danger':''}" data-inline-task="${t.id}" data-inline-field="due_date" type="date" value="${esc(t.due_date||'')}">`:`<span class="${isOverdue(t)?'danger':''}">${fmtDate(workflow.dueDate(t))}</span>${isCompletedTask(t)?`<div class="small muted">Completed: ${workflow.completedDate(t)?fmtDate(workflow.completedDate(t)):'time not recorded'}</div>`:''}`;
       const canInlineStatus=hasFullAccess() || (state.profile?.role==='va' && t.assigned_to===state.profile?.id);
       const statusCell=canInlineStatus?`<div class="inline-status-wrap"><select class="inline-control status-inline" data-inline-task="${t.id}" data-inline-field="status">${TASK_STATUSES.map(v=>`<option value="${v}" ${currentStatus===v?'selected':''}>${v}</option>`).join('')}</select>${isOverdue(t)?'<span class="small danger">Overdue</span>':''}</div>`:badge(displayStatus(t));
       return `<tr class="task-row ${taskStatusClass(t)}">
@@ -389,8 +382,10 @@
     let base=state.tasks;
     if(my) base=base.filter(t=>t.assigned_to===state.profile?.id);
     const rows=filterTasks(base);
-    const c=metricCounts(base);
+    const c=metricCounts(rows);
     return `<div class="page-head"><div><h1>${my?'My Tasks':'Tasks'}</h1><p class="muted">${my?'View tasks assigned to you':(hasFullAccess()?'Manage all tasks across accounts':'View agency tasks')}</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div>
+      ${recoveryBanner()}
+      <p class="small muted">Date field: <b>${state.filters.dateBasis==='completed'?'Completed On (your local time)':'Due Date (completed occurrence dates are kept in history)'}</b>. Use Completed On + Yesterday to see work finished yesterday, even if its due date was different.</p>
       ${my?`<div class="grid kpi-grid" style="grid-template-columns:repeat(5,1fr)">${kpi('My Total Tasks',c.total,'blue')}${kpi('Completed',c.complete,'green')}${kpi('In Progress',c.progress,'blue')}${kpi('Not Started',c.notStarted,'amber')}${kpi('Overdue',c.overdue,'red')}</div>`:''}
       <div class="card table-card"><div class="table-toolbar">${taskFilters()}<div class="muted small">${rows.length} tasks</div></div>${taskTable(rows)}</div>`;
   }
@@ -398,7 +393,7 @@
   function teamPage(){
     const teamMembers=visibleTeam();
     const rows=teamMembers.filter(m=>matchesGlobal([m.full_name,m.email,m.role])).map((m,i)=>{
-      const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>!isCompletedTask(t)).length, overdue=all.filter(isOverdue).length, completeToday=all.filter(t=>isCompletedTask(t) && (t.completed_at||'').slice(0,10)===today()).length;
+      const all=state.tasks.filter(t=>t.assigned_to===m.id), open=all.filter(t=>!isCompletedTask(t)).length, overdue=all.filter(isOverdue).length, completeToday=all.filter(completedToday).length;
       return `<tr><td>${i+1}</td><td><span class="avatar" style="display:inline-grid;width:28px;height:28px;font-size:10px;margin-right:7px">${initials(m.full_name)}</span><b>${esc(m.full_name||'Unnamed')}</b></td><td>${esc(m.email||'—')}</td><td>${badge(cap(m.role))}</td><td>${all.length}</td><td>${open}</td><td class="${overdue?'danger':''}">${overdue}</td><td>${completeToday}</td><td>${m.active?badge('Active'):badge('Paused')}</td>${canManageMember(m)?`<td><button class="btn small" data-edit-member="${m.id}">Edit</button></td>`:'<td>—</td>'}</tr>`;
     }).join('');
     const former=removedTeam().filter(m=>matchesGlobal([m.full_name,m.email,m.role]));
@@ -415,11 +410,11 @@
     const cells=[]; for(let i=0;i<start;i++) cells.push('<div class="day day-empty"></div>');
     for(let day=1;day<=days;day++){
       const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-      const ts=state.tasks.filter(t=>t.due_date===iso);
+      const ts=state.tasks.filter(t=>workflow.dateFor(t,state.calendarDateBasis)===iso);
       cells.push(`<div class="day calendar-day-click" data-calendar-date="${iso}" title="Open tasks for ${esc(fmtDate(iso))}"><div class="day-num">${day}</div>${ts.slice(0,4).map(t=>`<div class="cal-task ${taskStatusClass(t)}" data-open-task="${t.id}" title="${esc(t.title)}">${esc(t.title)}</div>`).join('')}${ts.length>4?`<div class="small muted calendar-more">+${ts.length-4} more</div>`:''}</div>`);
     }
     const monthLabel=new Date(year,month,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
-    return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">Click any date to review historical or upcoming tasks, then filter by user.</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div><div class="card panel"><div class="calendar-title-row"><button class="btn" data-calendar-shift="-1">← Previous</button><h3>${esc(monthLabel)}</h3><button class="btn" data-calendar-shift="1">Next →</button></div><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
+    return `<div class="page-head"><div><h1>Calendar</h1><p class="muted">Click any date to review historical or upcoming tasks, then filter by user.</p></div>${hasFullAccess()?'<button class="btn primary" data-action="new-task">＋ Add Task</button>':''}</div><div class="card panel"><div class="calendar-history-controls">${dateBasisSelect('calendarDateBasis',state.calendarDateBasis)}<span class="small muted">${state.calendarDateBasis==='completed'?'Work completed on each local date; tasks without a recorded completion time remain in Due Date view.':'All occurrences by their due date, including completed history.'}</span></div><div class="calendar-title-row"><button class="btn" data-calendar-shift="-1">← Previous</button><h3>${esc(monthLabel)}</h3><button class="btn" data-calendar-shift="1">Next →</button></div><div class="calendar">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}${cells.join('')}</div></div>`;
   }
 
   function shiftCalendarMonth(delta){
@@ -428,12 +423,13 @@
   }
 
   function calendarDayModal(date, assignee=''){
-    const all=state.tasks.filter(t=>t.due_date===date).sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
+    const all=state.tasks.filter(t=>workflow.dateFor(t,state.calendarDateBasis)===date).sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
     const tasks=assignee==='__unassigned__'?all.filter(t=>!t.assigned_to):(assignee?all.filter(t=>t.assigned_to===assignee):all);
     const completed=tasks.filter(isCompletedTask).length, overdue=tasks.filter(isOverdue).length, awaiting=tasks.filter(t=>normalizeTaskStatus(t.status)==='Awaiting').length;
     modal(`Tasks — ${fmtDate(date)}`,`
-      <div class="calendar-day-toolbar"><div class="field" style="margin:0"><label>User</label><select id="calendarUserFilter"><option value="">All Users</option><option value="__unassigned__" ${assignee==='__unassigned__'?'selected':''}>Unassigned</option>${visibleTeam().map(m=>`<option value="${m.id}" ${assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div><div class="calendar-day-summary"><span>${tasks.length} assigned</span><span>${completed} completed</span><span>${awaiting} awaiting</span><span>${overdue} overdue</span></div></div>
-      <div class="calendar-day-list">${tasks.map(t=>{const m=memberById(t.assigned_to),a=accountById(t.account_id);return `<button class="calendar-day-task ${taskStatusClass(t)}" data-calendar-open-task="${t.id}"><span><b>${esc(t.title)}</b><small>${esc(a?.account_name||'No account')} · ${esc(m?.full_name||'Unassigned')}</small></span><span>${badge(displayStatus(t))}</span></button>`;}).join('')||'<div class="empty">No tasks for this user on this date.</div>'}</div>
+      <p class="small muted">${state.calendarDateBasis==='completed'?'Completed on this date (local time)':'Occurrences due on this date'}</p>
+      <div class="calendar-day-toolbar"><div class="field" style="margin:0"><label>User</label><select id="calendarUserFilter"><option value="">All Users</option><option value="__unassigned__" ${assignee==='__unassigned__'?'selected':''}>Unassigned</option>${visibleTeam().map(m=>`<option value="${m.id}" ${assignee===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div><div class="calendar-day-summary"><span>${tasks.length} tasks</span><span>${completed} completed</span><span>${awaiting} awaiting</span><span>${overdue} overdue</span></div></div>
+      <div class="calendar-day-list">${tasks.map(t=>{const m=memberById(t.assigned_to),a=accountById(t.account_id);return `<button class="calendar-day-task ${taskStatusClass(t)}" data-calendar-open-task="${t.id}"><span><b>${esc(t.title)}</b><small>${esc(a?.account_name||'No account')} &middot; ${esc(m?.full_name||'Unassigned')} &middot; Due: ${fmtDate(workflow.dueDate(t))}${workflow.completedDate(t)?` &middot; Completed: ${fmtDate(workflow.completedDate(t))}`:''}</small></span><span>${badge(displayStatus(t))}</span></button>`;}).join('')||'<div class="empty">No tasks for this user on this date.</div>'}</div>
     `,'<button class="btn primary" id="closeCalendarDay">Close</button>');
     closeCalendarDay.onclick=closeModalFn;
     calendarUserFilter.onchange=e=>calendarDayModal(date,e.target.value);
@@ -457,7 +453,8 @@
       <div class="grid settings-grid">
         <div class="card panel"><h3>Profile</h3><div class="field"><label>Name</label><input id="setName" value="${esc(state.profile?.full_name||'')}"></div><div class="field"><label>Email</label><input value="${esc(state.profile?.email||state.user?.email||'')}" disabled></div><div class="field"><label>Role</label><input value="${esc(cap(state.profile?.role||''))}" disabled></div><button class="btn primary" data-action="save-profile">Save Profile</button></div>
         <div class="card panel"><h3>Agency</h3><div class="field"><label>Agency Name</label><input id="agencyName" value="${esc(state.agency?.name||'')}" ${hasFullAccess()?'':'disabled'}></div>${hasFullAccess()?`<div class="field"><label>Invite Code for VAs</label><div class="code-box">${esc(state.agency?.invite_code||'Not available')}</div></div><p class="small muted">Share the live dashboard URL plus this invite code. Each VA should use their own login.</p><button class="btn primary" data-action="save-agency">Save Agency</button>`:'<p class="small muted">Agency settings and invite codes are available to owners and managers.</p>'}</div>
-        <div class="card panel"><h3>Data & Security</h3><p class="muted">${state.demo?'Demo data is currently saved in this browser only. Connect Firebase for real multi-user storage.':'Live data is stored in Firebase Firestore. Authentication is handled by Firebase Auth.'}</p><p class="small"><b>Do not store</b> Seller Central passwords, OTP codes, bank credentials, or private API secrets in task notes.</p></div>
+        <div class="card panel"><h3>Data & Security</h3><p class="small muted">Build: 20261006-recurrence2</p><p class="muted">${state.demo?'Demo data is currently saved in this browser only. Connect Firebase for real multi-user storage.':'Live data is stored in Firebase Firestore. Authentication is handled by Firebase Auth.'}</p><p class="small"><b>Do not store</b> Seller Central passwords, OTP codes, bank credentials, or private API secrets in task notes.</p></div>
+        ${hasFullAccess()?`<div class="card panel"><h3>Recurring Recovery</h3><p class="muted">${missingRecurringTasks().length} completed recurring tasks have no next occurrence. Review the original due date, then create just the missing next task. Nothing is repaired automatically.</p><div class="actions"><button class="btn" data-action="export-task-backup">Download Task Backup</button><button class="btn primary" data-action="recurring-recovery">Review Missing Occurrences</button></div></div>`:''}
         <div class="card panel"><h3>Session</h3>${state.demo?'<button class="btn red" data-action="reset-demo">Reset Demo Data</button>':'<button class="btn red" data-action="signout">Sign Out</button>'}</div>
       </div>`;
   }
@@ -524,10 +521,16 @@
     ['fAccount','fAssignee','fStatus','fPriority','fSource'].forEach(id=>{const el=document.getElementById(id); if(el)el.onchange=e=>{const key={fAccount:'account',fAssignee:'assignee',fStatus:'status',fPriority:'priority',fSource:'source'}[id];state.filters[key]=e.target.value;render();};});
     const fDateMode=document.getElementById('fDateMode'); if(fDateMode)fDateMode.onchange=e=>{state.filters.dateMode=e.target.value;if(e.target.value!=='custom')state.filters.date='';render();};
     const fDateCustom=document.getElementById('fDateCustom'); if(fDateCustom)fDateCustom.onchange=e=>{state.filters.date=e.target.value;render();};
-    document.querySelectorAll('[data-inline-task]').forEach(el=>el.onchange=e=>{e.stopPropagation();inlineUpdateTask(el.dataset.inlineTask,el.dataset.inlineField,el.value);});
+    const fDateBasis=document.getElementById('fDateBasis'); if(fDateBasis)fDateBasis.onchange=e=>{state.filters.dateBasis=e.target.value;render();};
+    const calBasis=document.getElementById('calendarDateBasis'); if(calBasis)calBasis.onchange=e=>{state.calendarDateBasis=e.target.value;render();};
+    const vaBasis=document.getElementById('vaDateBasis'); if(vaBasis)vaBasis.onchange=e=>{state.dashboardMemberDateBasis=e.target.value;render();};
+    document.querySelectorAll('[data-action="clear-task-filters"]').forEach(el=>el.onclick=()=>{state.filters={account:'',assignee:'',status:'',priority:'',source:'',dateMode:'',date:'',dateBasis:'due'};state.search='';render();});
+    document.querySelectorAll('[data-action="recurring-recovery"]').forEach(el=>el.onclick=()=>recurringRecoveryModal());
+    document.querySelectorAll('[data-action="export-task-backup"]').forEach(el=>el.onclick=exportTaskBackup);
+    document.querySelectorAll('[data-inline-task]').forEach(el=>el.onchange=async e=>{e.stopPropagation();el.disabled=true;try{await inlineUpdateTask(el.dataset.inlineTask,el.dataset.inlineField,el.value);}finally{if(el.isConnected)el.disabled=false;}});
     document.querySelectorAll('[data-calendar-shift]').forEach(x=>x.onclick=()=>shiftCalendarMonth(Number(x.dataset.calendarShift||0)));
     document.querySelectorAll('[data-calendar-date]').forEach(x=>x.onclick=e=>{if(e.target.closest('[data-open-task]'))return;calendarDayModal(x.dataset.calendarDate);});
-    document.querySelectorAll('[data-va-dashboard]').forEach(x=>x.onclick=()=>{state.dashboardMemberId=x.dataset.vaDashboard;state.dashboardMemberDateMode=state.dashboardMemberDateMode||'today';render();});
+    document.querySelectorAll('[data-va-dashboard]').forEach(x=>x.onclick=()=>{state.dashboardMemberId=x.dataset.vaDashboard;state.dashboardMemberDateMode=state.dashboardMemberDateMode??'today';render();});
     document.querySelector('[data-va-dashboard-close]')?.addEventListener('click',()=>{state.dashboardMemberId='';render();});
     const vaDateMode=document.getElementById('vaDateMode'); if(vaDateMode)vaDateMode.onchange=e=>{state.dashboardMemberDateMode=e.target.value;if(e.target.value!=='custom')state.dashboardMemberDate='';render();};
     const vaCustomDate=document.getElementById('vaCustomDate'); if(vaCustomDate)vaCustomDate.onchange=e=>{state.dashboardMemberDate=e.target.value;render();};
@@ -539,32 +542,84 @@
 
   async function inlineUpdateTask(id, field, rawValue){
     const t=state.tasks.find(x=>x.id===id); if(!t)return;
-    const statusOnly=field==='status';
-    if(!hasFullAccess() && !(statusOnly && state.profile?.role==='va' && t.assigned_to===state.profile?.id)){toast('You do not have permission to change this field.');render();return;}
-    let value=rawValue;
-    if(['assigned_to','due_date'].includes(field) && value==='') value=null;
-    if(field==='status') value=normalizeTaskStatus(value);
+    if(!hasFullAccess() && !(field==='status' && state.profile?.role==='va' && t.assigned_to===state.profile?.id)){toast('You do not have permission to change this field.');render();return;}
+    if(field==='due_date' && isCompletedTask(t)){toast('Keep the completed occurrence date. Use Recurring Recovery for its next task.');render();return;}
+    const value=field==='status'?normalizeTaskStatus(rawValue):(['assigned_to','due_date'].includes(field)&&rawValue===''?null:rawValue);
     if(state.demo){
-      const patch={[field]:value};
-      if(field==='status') patch.completed_at=value==='Completed'?(t.completed_at||new Date().toISOString()):null;
-      Object.assign(t,patch); if(field==='status' && value==='Completed')ensureNextRecurringDemo(t); persistDemo();render();toast('Task updated');return;
+      try{
+        const next={...t,[field]:value};
+        if(next.recurring && (!workflow.validDate(next.due_date)||!workflow.RECURRENCES.includes(next.recurrence)))throw new Error('Recurring tasks need a valid date and recurrence.');
+        Object.assign(next,workflow.completionPatch(t,next,new Date().toISOString()));
+        workflow.child(next,id,state.profile.id,new Date().toISOString()); // Validate before mutation.
+        Object.assign(t,next); if(isCompletedTask(t))ensureNextRecurringDemo(t);
+        persistDemo();render();toast('Task updated');
+      }catch(error){toast(saveFailure(error));render();}
+      return;
     }
-    if(field==='status' && !hasFullAccess()){
-      const {error}=await sb.rpc('update_my_task_status',{p_task_id:id,p_status:value});
-      if(error){toast(error.message);render();return;} await loadData();toast(value==='Completed'?'Task completed':'Task status updated');return;
+    const res=field==='status'?await sb.rpc('update_my_task_status',{p_task_id:id,p_status:value})
+      :await sb.rpc('save_task',{p_task_id:id,p_task:{[field]:value}});
+    if(res.error){toast(saveFailure(res.error));render();return;}
+    await loadData();toast(completionSuccess(res.data,'Task updated'));
+  }
+
+  function exportTaskBackup(){
+    if(!hasFullAccess())return;
+    if(state.dataLoadError){toast('Refresh successfully before exporting a backup.');return;}
+    const snapshot={version:'20261006-recurrence2',exported_at:new Date().toISOString(),agency_id:state.profile?.agency_id,tasks:state.tasks};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(snapshot,null,2)],{type:'application/json'}));
+    const a=document.createElement('a');a.href=url;a.download=`task-backup-${today()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  function recurringRecoveryModal(){
+    if(!hasFullAccess())return;
+    if(state.dataLoadError){toast('Task data did not load completely. Refresh before recovery.');return;}
+    const tasks=missingRecurringTasks();
+    modal('Recurring Recovery',`
+      <div class="recovery-explanation"><b>Keep completed work. Create only its missing next occurrence.</b><p>First download a task backup in Settings. If you manually moved a completed task from Oct 5 to Oct 6, enter Oct 5 below for that task. The next Daily occurrence will be Oct 6. Do not restore a date unless you know it is correct.</p><p>Completion timestamps stay unchanged. For old records without a saved original date, the app cannot guess that date. This is not a midnight scheduler.</p></div>
+      <div id="recoveryMessage" class="small" role="status"></div>
+      ${tasks.map(t=>`<section class="recovery-item" data-recovery-row="${esc(t.id)}"><h4>${esc(t.title)}</h4><div class="small muted">${esc(memberById(t.assigned_to)?.full_name||'Unassigned')} &middot; ${esc(t.recurrence||'No recurrence selected')} &middot; Completed: ${workflow.completedDate(t)?fmtDate(workflow.completedDate(t)):'time not recorded'}</div><div class="field" style="margin-top:12px"><label>Recurrence</label><select data-recovery-frequency="${esc(t.id)}"><option value="">Choose recurrence</option>${workflow.RECURRENCES.map(v=>`<option value="${v}" ${t.recurrence===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="two"><div class="field"><label>Completed occurrence's original due date</label><input type="date" data-recovery-date="${esc(t.id)}" value="${esc(workflow.dueDate(t))}"></div><div class="field"><label>Next occurrence preview</label><div class="recovery-preview" data-recovery-preview="${esc(t.id)}">${fmtDate(recurrenceNextDate(workflow.dueDate(t),t.recurrence))} - Not Started</div></div></div>${!workflow.RECURRENCES.includes(t.recurrence)?'<p class="small danger">Choose the intended recurrence above before recovery.</p>':''}<div class="actions"><button class="btn" data-recovery-edit="${esc(t.id)}">View / Edit Task</button><button class="btn primary" data-repair-recurring="${esc(t.id)}" ${!workflow.RECURRENCES.includes(t.recurrence)?'disabled':''}>Create Next Task</button></div></section>`).join('')||'<div class="empty">No missing next occurrences found. No tasks were changed.</div>'}
+    `,'<button class="btn" id="closeRecovery">Close</button>');
+    document.getElementById('closeRecovery').onclick=closeModalFn;
+    function refreshRecoveryPreview(id){
+      const date=[...document.querySelectorAll('[data-recovery-date]')].find(x=>x.dataset.recoveryDate===id).value;
+      const frequency=[...document.querySelectorAll('[data-recovery-frequency]')].find(x=>x.dataset.recoveryFrequency===id).value;
+      const preview=[...document.querySelectorAll('[data-recovery-preview]')].find(x=>x.dataset.recoveryPreview===id);
+      const due=recurrenceNextDate(date,frequency);
+      preview.textContent=due?`${fmtDate(due)} - Not Started`:'Choose a valid date and recurrence';
+      const button=[...document.querySelectorAll('[data-repair-recurring]')].find(x=>x.dataset.repairRecurring===id);
+      button.disabled=!due;
     }
-    const patch={[field]:value};
-    if(field==='status') patch.completed_at=value==='Completed'?(t.completed_at||new Date().toISOString()):null;
-    const {error}=await sb.from('tasks').update(patch).eq('id',id);
-    if(error){toast(error.message);render();return;}
-    let recurrenceError=null;
-    if(field==='status' && value==='Completed' && t.recurring){const next=await sb.rpc('ensure_next_recurrence',{p_task_id:id});recurrenceError=next.error;}
-    await loadData();toast(recurrenceError?`Task updated, but next recurring task was not created: ${recurrenceError.message}`:'Task updated');
+    document.querySelectorAll('[data-recovery-date]').forEach(el=>el.oninput=()=>refreshRecoveryPreview(el.dataset.recoveryDate));
+    document.querySelectorAll('[data-recovery-frequency]').forEach(el=>el.onchange=()=>refreshRecoveryPreview(el.dataset.recoveryFrequency));
+    document.querySelectorAll('[data-recovery-edit]').forEach(el=>el.onclick=()=>taskModal(state.tasks.find(t=>t.id===el.dataset.recoveryEdit)));
+    document.querySelectorAll('[data-repair-recurring]').forEach(el=>el.onclick=async()=>{
+      const t=state.tasks.find(x=>x.id===el.dataset.repairRecurring);
+      const original=[...document.querySelectorAll('[data-recovery-date]')].find(x=>x.dataset.recoveryDate===t.id).value;
+      const frequency=[...document.querySelectorAll('[data-recovery-frequency]')].find(x=>x.dataset.recoveryFrequency===t.id).value;
+      const message=document.getElementById('recoveryMessage');
+      if(!workflow.RECURRENCES.includes(frequency)){message.textContent='Choose Daily, Weekly or Monthly recurrence.';return;}
+      if(!workflow.validDate(original)){message.textContent='Enter a valid original due date.';return;}
+      if(!confirm(`Keep "${t.title}" Completed on its original due date ${fmtDate(original)}, and create the missing next task for ${fmtDate(recurrenceNextDate(original,frequency))} (${frequency})?`))return;
+      document.querySelectorAll('[data-repair-recurring]').forEach(x=>x.disabled=true);
+      try{
+        let result;
+        if(state.demo){
+          t.due_date=original;t.completion_due_date=original;t.recurrence=frequency;
+          const child=ensureNextRecurringDemo(t);persistDemo();
+          result={data:{created_next:!!child,next_due_date:child?.due_date}};
+        }else result=await sb.rpc('repair_recurring_task',{p_task_id:t.id,p_expected_due_date:t.due_date||'',p_original_due_date:original,p_recurrence:frequency});
+        if(result.error){message.textContent=saveFailure(result.error);message.classList.add('danger');return;}
+        await loadData();recurringRecoveryModal();toast(completionSuccess(result.data,'Completed history preserved'));
+      }catch(error){message.textContent=saveFailure(error);message.classList.add('danger');}
+      finally{document.querySelectorAll('[data-repair-recurring]').forEach(x=>refreshRecoveryPreview(x.dataset.repairRecurring));}
+    });
   }
 
   function modal(title, body, foot=''){
     modalRoot.innerHTML=`<div class="modal-backdrop" id="backdrop"><div class="modal"><div class="modal-head"><h3 style="margin:0">${esc(title)}</h3><button class="icon-btn" id="closeModal">×</button></div><div class="modal-body">${body}</div>${foot?`<div class="modal-foot">${foot}</div>`:''}</div></div>`;
-    closeModal.onclick=closeModalFn; backdrop.onclick=e=>{if(e.target===backdrop)closeModalFn();};
+    const backdropEl=document.getElementById('backdrop');
+    document.getElementById('closeModal').onclick=closeModalFn;
+    backdropEl.onclick=e=>{if(e.target===backdropEl)closeModalFn();};
   }
   function closeModalFn(){ modalRoot.innerHTML=''; }
 
@@ -650,10 +705,10 @@
   async function saveVaTaskStatus(t){
     if(!t || t.assigned_to!==state.profile?.id){ toast('This task is not assigned to your login.'); return; }
     const status=normalizeTaskStatus(vaTaskStatus.value);
-    if(state.demo){t.status=status;t.completed_at=status==='Completed'?(t.completed_at||new Date().toISOString()):null;if(status==='Completed')ensureNextRecurringDemo(t);persistDemo();closeModalFn();render();toast(status==='Completed'?'Task marked completed':'Task status updated');return;}
+    if(state.demo){const next={...t,status};try{Object.assign(next,workflow.completionPatch(t,next,new Date().toISOString()));workflow.child(next,t.id,state.profile.id,new Date().toISOString());Object.assign(t,next);if(status==='Completed')ensureNextRecurringDemo(t);persistDemo();closeModalFn();render();toast('Task status updated');}catch(error){toast(saveFailure(error));}return;}
     const {error}=await sb.rpc('update_my_task_status',{p_task_id:t.id,p_status:status});
-    if(error){ toast(error.message); return; }
-    closeModalFn(); await loadData(); toast(status==='Completed'?'Task marked completed. Next recurring task created when applicable.':'Task status updated');
+    if(error){ toast(saveFailure(error)); return; }
+    closeModalFn(); await loadData(); toast(status==='Completed'?'Task completed; next occurrence saved when applicable.':'Task status updated');
   }
 
   function taskModal(t=null){
@@ -665,7 +720,7 @@
       <div class="two"><div class="field"><label>Account</label><select id="taskAccount" required><option value="">Select account</option>${state.accounts.map(a=>`<option value="${a.id}" ${x.account_id===a.id?'selected':''}>${esc(a.account_name)} — ${esc(a.client_name||'')}</option>`).join('')}</select></div><div class="field"><label>Assigned To</label><select id="taskAssignee"><option value="">Unassigned</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.assigned_to===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Task Source</label><select id="taskSource">${[...new Set([...TASK_SOURCES,x.source].filter(Boolean))].map(v=>`<option value="${esc(v)}" ${x.source===v?'selected':''}>${esc(v)}</option>`).join('')}</select></div><div class="field"><label>Assigned By</label><select id="taskReceived"><option value="">Not set</option>${activeTeam().map(m=>`<option value="${m.id}" ${x.received_by===m.id?'selected':''}>${esc(m.full_name)}</option>`).join('')}</select></div></div>
       <div class="two"><div class="field"><label>Status</label><select id="taskStatus">${TASK_STATUSES.map(v=>`<option value="${v}" ${currentStatus===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Priority</label><select id="taskPriority">${TASK_PRIORITIES.map(v=>`<option value="${v}" ${x.priority===v?'selected':''}>${v}</option>`).join('')}</select></div></div>
-      <div class="two"><div class="field"><label>Due Date</label><input id="taskDue" type="date" value="${esc(x.due_date||'')}"></div><div class="field"><label>Recurring</label><select id="taskRecurring"><option value="false" ${!x.recurring?'selected':''}>No</option><option value="true" ${x.recurring?'selected':''}>Yes</option></select></div></div>
+      <div class="two"><div class="field"><label>Due Date</label><input id="taskDue" type="date" value="${esc(x.due_date||'')}" ${edit&&isCompletedTask(x)?'disabled title="Completed history date; use Recurring Recovery to correct a manually moved date."':''}></div><div class="field"><label>Recurring</label><select id="taskRecurring"><option value="false" ${!x.recurring?'selected':''}>No</option><option value="true" ${x.recurring?'selected':''}>Yes</option></select></div></div>
       <div class="field"><label>Recurrence</label><select id="taskRecurrence"><option value="">None</option>${['Daily','Weekly','Monthly'].map(v=>`<option value="${v}" ${x.recurrence===v?'selected':''}>${v}</option>`).join('')}</select><div class="small muted">When a recurring task is completed, this occurrence stays in history and a new Not Started occurrence is created with the next due date.</div></div>
       <div class="field"><label>Notes / Description</label><textarea id="taskDescription" rows="4" placeholder="Details, client request, links...">${esc(x.description||'')}</textarea></div>
       ${edit?taskNotesSection(t,true):''}
@@ -679,26 +734,25 @@
       account_id:taskAccount.value||null,title:taskTitle.value.trim(),assigned_to:taskAssignee.value||null,received_by:taskReceived.value||null,source:taskSource.value,status:normalizeTaskStatus(taskStatus.value),priority:taskPriority.value,due_date:taskDue.value||null,recurring:taskRecurring.value==='true',recurrence:taskRecurrence.value||null,description:taskDescription.value.trim()
     };
     if(!data.title||!data.account_id){toast('Task and account are required');return;}
-    if(data.recurring && !data.recurrence){toast('Choose Daily, Weekly, or Monthly recurrence.');return;}
+    if(data.recurring && (!workflow.RECURRENCES.includes(data.recurrence)||!workflow.validDate(data.due_date))){toast('Choose a valid due date and Daily, Weekly, or Monthly recurrence.');return;}
     if(!data.recurring)data.recurrence=null;
-    if(state.demo){
-      let saved;
-      if(id){const i=state.tasks.findIndex(t=>t.id===id);state.tasks[i]={...state.tasks[i],...data,completed_at:data.status==='Completed'?(state.tasks[i].completed_at||new Date().toISOString()):null};saved=state.tasks[i];}
-      else {saved={id:'t'+Date.now(),...data,created_at:new Date().toISOString(),completed_at:data.status==='Completed'?new Date().toISOString():null};state.tasks.push(saved);}
-      if(data.status==='Completed' && data.recurring)ensureNextRecurringDemo(saved);
-      persistDemo();closeModalFn();render();toast('Task saved');return;
-    }
-    if(!hasFullAccess()){toast('Only an owner or manager can create or fully edit tasks.');return;}
-    data.agency_id=state.profile.agency_id;
-    const existing=id?state.tasks.find(t=>t.id===id):null;
-    data.completed_at=data.status==='Completed'?(existing?.completed_at||new Date().toISOString()):null;
-    if(!id) data.created_by=state.user.id;
-    const res=id?await sb.from('tasks').update(data).eq('id',id):await sb.from('tasks').insert(data);
-    if(res.error){toast(res.error.message);return;}
-    const savedId=id || res.data?.[0]?.id;
-    let recurrenceError=null;
-    if(savedId && data.status==='Completed' && data.recurring){const next=await sb.rpc('ensure_next_recurrence',{p_task_id:savedId});recurrenceError=next.error;}
-    closeModalFn();await loadData();toast(recurrenceError?`Task saved, but next recurring task was not created: ${recurrenceError.message}`:'Task saved');
+    const saveButton=document.getElementById('saveTask');if(saveButton)saveButton.disabled=true;
+    try{
+      if(state.demo){
+        const old=id?state.tasks.find(t=>t.id===id):null;
+        const saved={...(old||{id:'t'+Date.now(),agency_id:state.profile.agency_id,created_at:new Date().toISOString()}),...data};
+        Object.assign(saved,workflow.completionPatch(old,saved,new Date().toISOString()));
+        workflow.child(saved,saved.id,state.profile.id,new Date().toISOString());
+        if(old)Object.assign(old,saved);else state.tasks.push(saved);
+        if(isCompletedTask(saved)&&saved.recurring)ensureNextRecurringDemo(old||saved);
+        persistDemo();closeModalFn();render();toast('Task saved');return;
+      }
+      if(!hasFullAccess()){toast('Only an owner or manager can create or fully edit tasks.');return;}
+      const res=await sb.rpc('save_task',{p_task_id:id||'',p_task:data});
+      if(res.error){toast(saveFailure(res.error));return;}
+      closeModalFn();await loadData();toast(completionSuccess(res.data));
+    }catch(error){toast(saveFailure(error));}
+    finally{if(saveButton?.isConnected)saveButton.disabled=false;}
   }
 
   async function deleteTaskData(id){ if(!hasFullAccess()){toast('Only an owner or manager can delete tasks.');return;} if(!confirm('Delete this task?'))return; if(state.demo){state.tasks=state.tasks.filter(t=>t.id!==id);persistDemo();closeModalFn();render();return;} const {error}=await sb.from('tasks').delete().eq('id',id); if(error)toast(error.message);else{closeModalFn();await loadData();} }
@@ -839,7 +893,9 @@
     const {data:{session}}=await sb.auth.getSession(); state.user=session?.user||null;
     if(!state.user){state.profile=null;state.agency=null;state.accounts=[];state.tasks=[];state.team=[];render();return;}
     const {data:profile,error:pErr}=await sb.from('profiles').select('*').eq('id',state.user.id).single();
-    if(pErr){toast(pErr.message);return;} state.profile=profile;
+    if(pErr){toast(pErr.message);return;}
+    if(state.profile?.agency_id!==profile.agency_id){state.agency=null;state.accounts=[];state.tasks=[];state.team=[];}
+    state.profile=profile;
     if(profile.removed===true || profile.active===false){state.agency=null;state.accounts=[];state.tasks=[];state.team=[profile];render();return;}
     if(!profile.agency_id){state.agency=null;state.accounts=[];state.tasks=[];state.team=[profile];render();return;}
     const [agencyRes,accountsRes,tasksRes,teamRes]=await Promise.all([
@@ -848,7 +904,9 @@
       sb.from('tasks').select('*').order('created_at',{ascending:false}),
       sb.from('profiles').select('*').order('created_at',{ascending:true})
     ]);
-    if(agencyRes.error)toast(agencyRes.error.message); state.agency=agencyRes.data;
+    const readError=[agencyRes,accountsRes,tasksRes,teamRes].find(r=>r.error)?.error;
+    if(readError){state.dataLoadError=readError.message;toast('Data could not be refreshed: '+readError.message);render();return;}
+    state.dataLoadError='';state.agency=agencyRes.data;
     state.accounts=accountsRes.data||[];state.tasks=(tasksRes.data||[]).map(t=>({...t,status:normalizeTaskStatus(t.status)}));state.team=teamRes.data||[];
     render();
   }
@@ -876,5 +934,10 @@
     await loadData();
   }
 
+  let renderedDay=today();
+  function refreshDayBoundary(){const day=today();if(day!==renderedDay&&!modalRoot.firstChild){renderedDay=day;render();}}
+  window.addEventListener('focus',refreshDayBoundary);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshDayBoundary();});
+  setInterval(refreshDayBoundary,60000);
   init();
 })();
